@@ -1,0 +1,11 @@
+# editors
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+.kate-swp
+# OS
+.DS_Store
+Thumbs.db
+.directory

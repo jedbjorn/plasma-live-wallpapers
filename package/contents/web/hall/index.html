@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hall</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #050608; }
+  body.static { background: #050608 url("still.jpg") 62% center / cover no-repeat; }
+  #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; opacity: 0; transition: opacity .8s ease; }
+  #scene.on { opacity: 1; }
+  body.static #scene { display: none; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<script src="shader.js"></script>
+<script src="wallpaper.js"></script>
+</body>
+</html>

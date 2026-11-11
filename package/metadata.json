@@ -1,0 +1,13 @@
+{
+    "KPackageStructure": "Plasma/Wallpaper",
+    "KPlugin": {
+        "Id": "com.designsos.livescenes",
+        "Name": "Live Scenes",
+        "Description": "Animated scenes: the Designs/OS concrete hall, Smoke Signal, Living Water",
+        "Icon": "weather-clear-night",
+        "License": "MIT",
+        "Version": "1.0.0",
+        "Website": "https://github.com/jedbjorn/plasma-live-wallpapers"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

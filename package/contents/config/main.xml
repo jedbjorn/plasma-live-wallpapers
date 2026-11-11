@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <!-- which scene to run: a folder name under contents/web -->
+    <entry name="Scene" type="String"><default>hall</default></entry>
+    <entry name="Fps" type="Int"><default>30</default></entry>
+    <!-- hall: 0 loops through a day every LoopSeconds (as on the site), 1 follows the real clock -->
+    <entry name="Mode" type="Int"><default>0</default></entry>
+    <entry name="LoopSeconds" type="Int"><default>84</default></entry>
+    <!-- hall: render resolution as a percentage of the screen's -->
+    <entry name="RenderScale" type="Int"><default>100</default></entry>
+    <!-- smoke-signal: the gun fires now and then -->
+    <entry name="Shots" type="Bool"><default>true</default></entry>
+    <!-- living-water: how fast the koi swim, as a percentage of normal -->
+    <entry name="SwimSpeed" type="Int"><default>100</default></entry>
+  </group>
+</kcfg>
