@@ -9,6 +9,18 @@ Live Scenes is a wallpaper plugin for KDE Plasma 6. It shows an animated scene a
 
 The videos are screen recordings of the wallpaper running on a Plasma 6 desktop, at 1080p and 60 fps. The small previews above and the stills below are renders of the scene pages in headless Chromium, stepped frame by frame.
 
+**Hall**
+
+https://github.com/user-attachments/assets/0b095001-25ac-4e0a-a24c-fdac912a55c8
+
+**Smoke Signal**
+
+https://github.com/user-attachments/assets/7aef2369-279a-4bae-8e18-d778011350b7
+
+**Living Water**
+
+https://github.com/user-attachments/assets/c4362d1e-b1f9-44e8-b46b-99c9e87d04bd
+
 ![Hall, day](docs/hall-day.jpg)
 ![Hall, golden hour](docs/hall-golden-hour.jpg)
 ![Hall, night](docs/hall-night.jpg)
