@@ -5,9 +5,9 @@ Live Scenes is a wallpaper plugin for KDE Plasma 6. It shows an animated scene a
 | Hall | Smoke Signal | Living Water |
 | --- | --- | --- |
 | ![Hall](docs/hall.webp) | ![Smoke Signal](docs/smoke-signal.webp) | ![Living Water](docs/living-water.webp) |
-| [video](docs/hall.mp4) | [video](docs/smoke-signal.mp4) | [video](docs/living-water.mp4) |
+| [video (1080p)](docs/hall.webm) | [video (1080p)](docs/smoke-signal.webm) | [video (1080p)](docs/living-water.webm) |
 
-The previews and videos are renders of the scene pages in headless Chromium, stepped frame by frame, not captures of a running desktop. The Hall video runs a whole day in 24 seconds; the default is 84.
+The videos are screen recordings of the wallpaper running on a Plasma 6 desktop, at 1080p and 60 fps. The small previews above and the stills below are renders of the scene pages in headless Chromium, stepped frame by frame.
 
 ![Hall, day](docs/hall-day.jpg)
 ![Hall, golden hour](docs/hall-golden-hour.jpg)
