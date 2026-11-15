@@ -88,6 +88,18 @@ This runs `kpackagetool6 --type Plasma/Wallpaper --remove com.designsos.livescen
 
 Any Plasma 6 distribution should work if it has the package providing the QtWebEngine QML module and the package providing `kpackagetool6`. On Arch the package names are the same as on CachyOS (`qt6-webengine`, `kpackage`). Package names for other distributions have not been checked here.
 
+## macOS
+
+The `macos/` folder holds a small menu-bar app that runs the same scene pages as the desktop wallpaper on macOS 13 or later. It draws one window per display at desktop level, below the icons. It needs the Xcode command line tools (`xcode-select --install`).
+
+```
+./macos/build.sh --run
+```
+
+This builds `LiveScenes.app`, signs it ad hoc and installs it to `~/Applications`. All settings are in its menu bar icon, including Open at Login. Rendering stops while the displays sleep or the screen is locked, and WebKit pauses the page while windows cover the whole desktop. To update, run `git pull && ./macos/build.sh --run`. To uninstall, quit it from the menu and delete `~/Applications/LiveScenes.app`.
+
+Tested on macOS 26.6 with an Apple M3 and a single built-in display. Multiple displays and Open at Login have not been tested.
+
 ## Settings reference
 
 | Setting | Applies to | Range / values | Default |
