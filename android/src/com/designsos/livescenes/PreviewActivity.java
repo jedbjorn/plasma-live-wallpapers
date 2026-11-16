@@ -187,13 +187,14 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
                 }
                 JSONObject scene = new JSONObject(entry.toString());
                 if (!scene.has("format")) scene.put("format", 1);
-                // a look saved already (here or meanwhile) is updated and keeps its profiles: never a duplicate
+                // a look saved already (here or meanwhile) is updated and keeps its profiles: never a duplicate.
+                // An update only replaces the video; it doesn't change which profile is the wallpaper.
                 boolean was = Store.get(this).isSaved(id);
-                Store.Profile p = Store.get(this).install(scene, orientation, file, poster, true);
+                Store.Profile p = Store.get(this).install(scene, orientation, file, poster, !was);
                 runOnUiThread(() -> {
                     saved = true;
-                    Toast.makeText(this, (was ? "Updated " + title + ": “" : "Saved “") + p.name
-                            + "” is the active profile now", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, was ? "Updated " + title
+                            : "Saved “" + p.name + "”, the active profile now", Toast.LENGTH_LONG).show();
                     finish();
                 });
             } catch (IOException | JSONException e) {
