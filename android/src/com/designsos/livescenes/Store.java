@@ -174,27 +174,49 @@ final class Store {
         return true;
     }
 
-    /** A new profile for a saved look; it becomes the active one. */
-    synchronized Profile addProfile(String look, String name) {
-        Profile p = new Profile();
-        p.id = UUID.randomUUID().toString().substring(0, 8);
-        p.look = look;
-        p.name = uniqueName(name);
-        profiles.add(p);
+    /** The profiles that play a look. */
+    synchronized List<Profile> profilesFor(String look) {
+        List<Profile> l = new ArrayList<>();
+        for (Profile p : profiles) if (p.look.equals(look)) l.add(p);
+        return l;
+    }
+
+    /**
+     * A profile for a saved look at a speed, made from the saved files (nothing to download); it becomes the
+     * active one. A look has nothing else to set, so if a profile already plays it at that speed, that one is used.
+     */
+    synchronized Profile addProfile(String look, float speed) {
+        speed = nearestSpeed(speed);
+        Profile p = withSpeed(profiles, look, speed);
+        if (p == null) {
+            p = new Profile();
+            p.id = UUID.randomUUID().toString().substring(0, 8);
+            p.look = look;
+            p.speed = speed;
+            List<String> taken = new ArrayList<>();
+            for (Profile q : profiles) taken.add(q.name);
+            p.name = profileName(lookTitle(look), speed, taken);
+            profiles.add(p);
+        }
         active = p.id;
         save();
         return p;
     }
 
-    private String uniqueName(String name) {
-        String n = name;
-        for (int i = 2; ; i++) {
-            boolean taken = false;
-            for (Profile p : profiles) taken |= p.name.equals(n);
-            if (!taken) return n;
-            n = name + " " + i;
-        }
+    static Profile withSpeed(List<Profile> ps, String look, float speed) {
+        for (Profile p : ps) if (p.look.equals(look) && p.speed == speed) return p;
+        return null;
     }
+
+    /** "Hall" for the first 1× profile, else "Hall (0.5×)", "Hall (2×)", "Hall (1×)"; a number only if that's taken too. */
+    static String profileName(String title, float speed, List<String> taken) {
+        String base = title + " (" + speedLabel(speed) + ")";
+        if (speed == 1f && !taken.contains(title)) return title;
+        if (!taken.contains(base)) return base;
+        for (int i = 2; ; i++) if (!taken.contains(base + " " + i)) return base + " " + i;
+    }
+
+    static String speedLabel(float s) { return (s == 0.5f ? "0.5" : String.valueOf((int) s)) + "×"; }
 
     static float nearestSpeed(float s) {
         float best = 1f;
@@ -222,6 +244,22 @@ final class Store {
     long lookBytes(String look) { return treeBytes(lookDir(look)); }
 
     long totalBytes() { return treeBytes(looksDir); }
+
+    /** Whether a look is saved on the device (it may have no profile left, in an odd case). */
+    boolean isSaved(String look) { return new File(lookDir(look), "scene.json").isFile(); }
+
+    /** The sha256 a scene lists for its video of an orientation, or "". */
+    static String videoSha(JSONObject scene, String orientation) {
+        JSONObject v = scene != null ? scene.optJSONObject("videos") : null;
+        JSONObject e = v != null ? v.optJSONObject(orientation) : null;
+        return e != null ? e.optString("sha256", "") : "";
+    }
+
+    /** The catalog has a different video than the saved one (both sha256s known, for the same orientation). */
+    static boolean isNewer(String savedSha, String catalogSha) {
+        return savedSha != null && catalogSha != null && !savedSha.isEmpty() && !catalogSha.isEmpty()
+                && !savedSha.equalsIgnoreCase(catalogSha);
+    }
 
     File poster(String look) {
         File f = new File(lookDir(look), "poster.jpg");
@@ -327,10 +365,12 @@ final class Store {
     // ---- saving a look (from a preview or an import)
 
     /**
-     * Installs a look: scene.json, the one video file (moved), the poster (moved, if any), replacing an older copy.
-     * Then a profile is made for it, active, unless {@code reuseProfile} and one already uses the look.
+     * Installs a look: scene.json, the one video file (moved), the poster (moved, if any), replacing an older copy
+     * (for every profile that plays it). If a profile already plays the look, that one is returned, never a second
+     * one: with {@code activate} it becomes the active one, unless the active profile already plays this look.
+     * Otherwise a profile is made for it, and it becomes the active one.
      */
-    Profile install(JSONObject scene, String orientation, File video, File poster, boolean reuseProfile) throws IOException {
+    Profile install(JSONObject scene, String orientation, File video, File poster, boolean activate) throws IOException {
         String id = scene.optString("id");
         if (!id.matches("[a-z0-9-]+")) throw new IOException("bad look id: " + id);
         File tmp = new File(looksDir, "." + id + ".new");
@@ -360,13 +400,14 @@ final class Store {
             if (dir.exists() && !dir.renameTo(old)) throw new IOException("can't replace " + dir);
             if (!tmp.renameTo(dir)) throw new IOException("can't install " + dir);
             deleteTree(old);   // a player still reading the old file keeps it until it closes it
-            Profile existing = null;
-            if (reuseProfile) for (Profile p : profiles) if (p.look.equals(id)) { existing = p; break; }
-            if (existing != null) {
-                result = existing;
-                save();   // the file changed: playing wallpapers reload it
+            List<Profile> using = profilesFor(id);
+            Profile current = activeProfile();
+            if (using.isEmpty()) {
+                result = addProfile(id, 1f);
             } else {
-                result = addProfile(id, scene.optString("title", id));
+                result = current != null && current.look.equals(id) ? current : using.get(0);
+                if (activate) active = result.id;
+                save();   // the file changed: playing wallpapers reload it
             }
         }
         Log.i(TAG, "installed look " + id + " (" + orientation + ")");
@@ -412,7 +453,7 @@ final class Store {
                 copy(video, v);
                 File poster = new File(pack, "poster.jpg"), p = null;
                 if (poster.isFile()) copy(poster, p = new File(stage, "poster.jpg"));
-                install(scene, o, v, p, true);
+                install(scene, o, v, p, false);
                 deleteTree(stage);
                 report.add("Imported " + scene.optString("title", pack.getName()));
             } catch (IOException | JSONException e) {

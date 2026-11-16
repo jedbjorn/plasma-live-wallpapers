@@ -32,7 +32,8 @@ import static com.designsos.livescenes.Ui.dp;
 /**
  * Preview of a catalog look: downloads the one video this device needs into the cache folder (checking its
  * sha256), plays it full screen, and either saves it as a profile or discards it. Leaving without saving
- * deletes the download.
+ * deletes the download. For a look that is already saved (the catalog has a newer video), saving updates it:
+ * its files are replaced for all its profiles and no profile is added.
  */
 public class PreviewActivity extends Activity implements TextureView.SurfaceTextureListener {
     static final String EXTRA_ENTRY = "entry", EXTRA_ORIENTATION = "orientation", EXTRA_VIDEO = "video", EXTRA_POSTER = "poster";
@@ -42,7 +43,7 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
     URL videoUrl, posterUrl;
     File dir, file;
     volatile boolean cancelled;
-    boolean downloaded, saved, saving;
+    boolean downloaded, saved, saving, update;
     Surface surface;
     int sw, sh;
     VideoLoop player;
@@ -68,6 +69,7 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
         dir = new File(getCacheDir(), "preview");
         dir.mkdirs();
         file = new File(dir, id + "-" + orientation + ".mp4");
+        update = Store.get(this).isSaved(id);
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -100,7 +102,7 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
         discard.setText("Discard");
         discard.setOnClickListener(v -> finish());
         save = new Button(this);
-        save.setText("Save as profile");
+        save.setText(update ? "Update" : "Save as profile");
         save.setEnabled(false);
         save.setOnClickListener(v -> save());
         buttons.addView(discard);
@@ -134,7 +136,8 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
                     downloaded = true;
                     bar.setVisibility(View.GONE);
                     status.setText(SettingsActivity.cap(orientation) + " video · " + Ui.size(this, file.length())
-                            + (sha.isEmpty() ? "" : " · verified"));
+                            + (sha.isEmpty() ? "" : " · verified")
+                            + (update ? "\nSaved already: Update replaces the saved video, no new profile." : ""));
                     save.setEnabled(true);
                     play();
                 });
@@ -174,7 +177,7 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
         saving = true;
         save.setEnabled(false);
         discard.setEnabled(false);
-        status.setText("Saving…");
+        status.setText(update ? "Updating…" : "Saving…");
         Ui.IO.execute(() -> {
             try {
                 File poster = null;
@@ -184,10 +187,14 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
                 }
                 JSONObject scene = new JSONObject(entry.toString());
                 if (!scene.has("format")) scene.put("format", 1);
-                Store.Profile p = Store.get(this).install(scene, orientation, file, poster, false);
+                // a look saved already (here or meanwhile) is updated and keeps its profiles: never a duplicate.
+                // An update only replaces the video; it doesn't change which profile is the wallpaper.
+                boolean was = Store.get(this).isSaved(id);
+                Store.Profile p = Store.get(this).install(scene, orientation, file, poster, !was);
                 runOnUiThread(() -> {
                     saved = true;
-                    Toast.makeText(this, "Saved “" + p.name + "”: it's the active profile now", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, was ? "Updated " + title
+                            : "Saved “" + p.name + "”, the active profile now", Toast.LENGTH_LONG).show();
                     finish();
                 });
             } catch (IOException | JSONException e) {

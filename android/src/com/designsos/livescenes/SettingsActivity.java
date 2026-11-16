@@ -39,7 +39,7 @@ public class SettingsActivity extends Activity {
     String orientation;
     List<Catalog.Entry> catalog;
     int catalogRequest;
-    final Runnable onStore = this::renderProfiles;
+    final Runnable onStore = () -> { renderProfiles(); renderCatalog(); };   // cards show what's saved
 
     @Override
     protected void onCreate(Bundle state) {
@@ -201,7 +201,7 @@ public class SettingsActivity extends Activity {
         return row;
     }
 
-    static String speedLabel(float s) { return (s == 0.5f ? "0.5" : String.valueOf((int) s)) + "×"; }
+    static String speedLabel(float s) { return Store.speedLabel(s); }
 
     void rename(Store.Profile p) {
         EditText e = new EditText(this);
@@ -266,9 +266,11 @@ public class SettingsActivity extends Activity {
     }
 
     void renderCatalog() {
+        if (catalogBox == null) return;
         catalogBox.removeAllViews();
         if (catalog == null) return;
-        catalogStatus.setText(catalog.isEmpty() ? "The catalog is empty." : "Tap a look to preview it.");
+        catalogStatus.setText(catalog.isEmpty() ? "The catalog is empty."
+                : "Tap a look to preview it. Tap a saved one to use it or add a profile.");
         LinearLayout line = null;
         for (int i = 0; i < catalog.size(); i++) {
             if (i % 2 == 0) {
@@ -293,18 +295,107 @@ public class SettingsActivity extends Activity {
         LinearLayout texts = column();
         texts.setPadding(dp(this, 12), dp(this, 8), dp(this, 12), dp(this, 12));
         texts.addView(Ui.bold(this, e.title, 16));
-        String what = e.orientation.equals(orientation) ? "" : " (cropped)";
-        TextView size = Ui.text(this, cap(e.orientation) + what + " · " + Ui.size(this, e.bytes), 13);
-        size.setAlpha(0.7f);
-        texts.addView(size);
+        boolean saved = store.isSaved(e.id);
+        boolean newer = saved && Store.isNewer(Store.videoSha(store.scene(e.id), e.orientation), e.sha256);
+        TextView sub;
+        if (saved) {
+            int n = store.profilesFor(e.id).size();
+            sub = Ui.text(this, newer ? "Saved · update" : "Saved · " + profiles(n), 13);
+            sub.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
+            card.setContentDescription(e.title + ", saved, " + profiles(n) + (newer ? ", update available" : ""));
+            card.setOnClickListener(v -> savedLook(e));
+        } else {
+            String what = e.orientation.equals(orientation) ? "" : " (cropped)";
+            sub = Ui.text(this, cap(e.orientation) + what + " · " + Ui.size(this, e.bytes), 13);
+            sub.setAlpha(0.7f);
+            card.setContentDescription("Preview " + e.title);
+            card.setOnClickListener(v -> preview(e));
+        }
+        texts.addView(sub);
         card.addView(texts);
-        card.setContentDescription("Preview " + e.title);
-        card.setOnClickListener(v -> startActivity(new Intent(this, PreviewActivity.class)
+        return card;
+    }
+
+    static String profiles(int n) { return n == 1 ? "1 profile" : n + " profiles"; }
+
+    void preview(Catalog.Entry e) {
+        startActivity(new Intent(this, PreviewActivity.class)
                 .putExtra(PreviewActivity.EXTRA_ENTRY, e.json.toString())
                 .putExtra(PreviewActivity.EXTRA_ORIENTATION, e.orientation)
                 .putExtra(PreviewActivity.EXTRA_VIDEO, e.video.toString())
-                .putExtra(PreviewActivity.EXTRA_POSTER, e.poster != null ? e.poster.toString() : null)));
-        return card;
+                .putExtra(PreviewActivity.EXTRA_POSTER, e.poster != null ? e.poster.toString() : null));
+    }
+
+    /**
+     * A catalog look that is already saved: nothing is downloaded. Use one of its profiles, add one at another
+     * speed (from the saved files), or, if the catalog has a newer video, update it (via the preview).
+     */
+    void savedLook(Catalog.Entry e) {
+        boolean newer = Store.isNewer(Store.videoSha(store.scene(e.id), e.orientation), e.sha256);
+        List<Store.Profile> using = store.profilesFor(e.id);
+        Store.Profile active = store.activeProfile();
+        LinearLayout v = column();
+        v.setPadding(dp(this, 24), dp(this, 4), dp(this, 24), 0);
+        AlertDialog[] dialog = new AlertDialog[1];
+
+        TextView intro = Ui.text(this, newer
+                ? "Saved on this phone. The catalog has a newer video (" + Ui.size(this, e.bytes) + "): "
+                        + "Update downloads it and replaces the saved one for " + (using.size() == 1 ? "its profile." : "all its profiles.")
+                : "Saved on this phone: no download needed.", 15);
+        intro.setAlpha(0.8f);
+        v.addView(intro, Ui.wide(0));
+
+        if (!using.isEmpty()) {
+            v.addView(dialogHeading("Use"));
+            for (Store.Profile p : using) {
+                boolean playing = active != null && p.id.equals(active.id);
+                Button b = Ui.flatButton(this, p.name + " · " + speedLabel(p.speed) + (playing ? " · playing" : ""));
+                b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                if (playing) {
+                    b.setEnabled(false);
+                } else {
+                    b.setOnClickListener(x -> {
+                        store.setActive(p.id);
+                        Toast.makeText(this, "“" + p.name + "” is the active profile now", Toast.LENGTH_SHORT).show();
+                        dialog[0].dismiss();
+                    });
+                }
+                v.addView(b, Ui.wide(0));
+            }
+        }
+
+        LinearLayout speeds = new LinearLayout(this);
+        for (float s : Store.SPEEDS) {
+            if (Store.withSpeed(using, e.id, s) != null) continue;   // that profile exists: use it above
+            Button b = Ui.flatButton(this, speedLabel(s));
+            b.setContentDescription("Add a profile for " + e.title + " at " + speedLabel(s));
+            b.setOnClickListener(x -> {
+                Store.Profile p = store.addProfile(e.id, s);
+                Toast.makeText(this, "Added “" + p.name + "”: it's the active profile now", Toast.LENGTH_LONG).show();
+                dialog[0].dismiss();
+            });
+            speeds.addView(b);
+        }
+        if (speeds.getChildCount() > 0) {
+            v.addView(dialogHeading(using.isEmpty() ? "Add a profile at speed" : "Add another profile at speed"));
+            v.addView(speeds, Ui.wide(0));
+        }
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(e.title)
+                .setView(v)
+                .setNegativeButton("Close", null);
+        if (newer) b.setPositiveButton("Update", (d, w) -> preview(e));
+        dialog[0] = b.show();
+    }
+
+    TextView dialogHeading(String s) {
+        TextView t = Ui.text(this, s, 13);
+        t.setAllCaps(true);
+        t.setLetterSpacing(0.08f);
+        t.setAlpha(0.7f);
+        t.setPadding(0, dp(this, 16), 0, dp(this, 2));
+        return t;
     }
 
     static String cap(String s) { return Character.toUpperCase(s.charAt(0)) + s.substring(1); }
