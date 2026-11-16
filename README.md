@@ -137,14 +137,26 @@ Tested on a Pixel 6 with Android 17: playback and seamless looping, speed preset
 
 ## macOS
 
-The [`macos/`](macos/) app is being moved to the video format. Until then it still renders the scenes live from `scenes-src/` and works as before:
+The [`macos/`](macos/) folder holds the Live Scenes menu-bar app. It runs on macOS 13 or later and builds with `swiftc` (no full Xcode needed):
 
 ```sh
 xcode-select --install          # once
 ./macos/build.sh --run
 ```
 
-It builds with `swiftc` (no full Xcode needed), installs `LiveScenes.app` to `~/Applications` and launches it. Use the menu bar icon to choose a scene and its settings, Pause or Resume, and enable Open at Login. To uninstall, quit it from the menu and delete `~/Applications/LiveScenes.app`. Tested on macOS 26.6 with an Apple M3 and a single display.
+This builds `LiveScenes.app`, installs it to `~/Applications` and starts it. The build bundles the Living Water look from `build/packs/living-water/` if you made it with the SDK (set `LIVESCENES_DEFAULT_PACK` to use another pack), otherwise it downloads it once from the latest release, checks its sha256 and keeps it in `macos/build/default/`.
+
+The menu bar icon switches between your profiles, sets the active profile's speed, and has Pause/Resume and Open at Login. **Profiles and Catalog…** opens the Live Scenes window: browse the catalog, preview a look (it plays on your desktop right away), then **Save as Profile** or **Discard**; rename, re-speed or delete profiles, and see how much storage your looks use. Closing the window while previewing discards the preview. The catalog URL can be changed under Advanced. `sdk/livescenes add` installs a look pack straight into the app's folder, and the app picks it up at once.
+
+Every screen shows the same profile. One video player feeds all screens, decoded in hardware, scaled to fill each screen and cropped around the look's focus point.
+
+Saved looks and `profiles.json` are in `~/Library/Application Support/LiveScenes/`, previews in `~/Library/Caches/LiveScenes/preview/`.
+
+To update, run `git pull && ./macos/build.sh --run`. To uninstall, quit it from the menu, delete `~/Applications/LiveScenes.app`, and delete `~/Library/Application Support/LiveScenes/` if you don't want to keep your saved looks.
+
+### Efficiency
+
+Playback pauses while every screen's wallpaper is hidden (covered by windows or a full-screen app), while the displays sleep, and while the screen is locked or another user is active. The app does not keep the display awake. On an Apple M3 laptop (macOS 26.6, Living Water at 2560×1440), the app itself used about 1% of one core while playing and nothing measurable while covered or paused; hardware decoding runs in the system's video decoder service.
 
 ## Make your own looks
 
