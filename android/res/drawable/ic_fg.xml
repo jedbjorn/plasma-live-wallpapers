@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the hall's light slot: a tall warm opening in a dark wall, spilling onto the floor -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#40F2B35B" android:pathData="M49,72 L59,72 L76,82 L32,82 Z" />
+    <path android:fillColor="#FFF2B35B" android:pathData="M50,28 h8 a1,1 0 0 1 1,1 v43 h-10 v-43 a1,1 0 0 1 1,-1 z" />
+    <path android:fillColor="#FFFFE2B0" android:pathData="M52,31 h4 v38 h-4 z" />
+</vector>
