@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/c4362d1e-b1f9-44e8-b46b-99c9e87d04bd
 ## The looks
 
 - **Hall**: a concrete hall with a light slot in the wall, through one full day (daylight, golden hour, dusk, night, dawn) every 84 seconds.
-- **Smoke Signal**: a figure illustration with fluid smoke curling off a gun muzzle, seen as a failing transmission: slice glitches, RGB split, neon washes, rain, scanlines and grain. On phones the whole picture is turned sideways so it fills the screen; it reads upright with the phone turned to landscape. The illustration is unofficial Cyberpunk 2077 fan art, not approved or endorsed by CD PROJEKT RED and not covered by this repository's licence; see [ASSETS.md](ASSETS.md).
+- **Smoke Signal**: a figure illustration with fluid smoke curling off a gun muzzle, seen as a failing transmission: slice glitches, RGB split, neon washes, rain, scanlines and grain. On phones the whole picture is turned sideways so it fills the screen; it reads upright with the phone turned to landscape. The illustration is unofficial Cyberpunk 2077 fan art, used under CD PROJEKT RED's Fan Content Guidelines and not approved or endorsed by them. It is the only part of the project not under the MIT licence; see [ASSETS.md](ASSETS.md).
 - **Living Water**: koi swimming under a water surface, with refraction, caustic light, ripple rings and drifting motes. It is built into the apps, so they show something before you download anything.
 
 The looks were made once from animated web pages, which are kept in [`scenes-src/`](scenes-src/) as their source. The apps no longer render anything live.
@@ -170,9 +170,7 @@ ln -s "$PWD/skills/live-scene" ~/.claude/skills/live-scene
 
 ## License
 
-The code is MIT licensed, see [LICENSE](LICENSE).
-
-The images and videos are not covered by that licence, see [ASSETS.md](ASSETS.md).
+MIT, see [LICENSE](LICENSE): the code, and the images and videos we made (Hall, Living Water). The one exception is the Smoke Signal artwork, unofficial Cyberpunk 2077 fan content that isn't ours to license; see [ASSETS.md](ASSETS.md).
 
 ## Credits
 
