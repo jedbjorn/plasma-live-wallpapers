@@ -27,7 +27,7 @@ cat > "$out/Contents/Info.plist" <<'EOF'
 EOF
 
 swiftc -O -o "$out/Contents/MacOS/LiveScenes" macos/LiveScenes.swift
-cp -R package/contents/web "$out/Contents/Resources/web"
+cp -R scenes-src "$out/Contents/Resources/web"
 codesign --force --sign - "$out"
 
 mkdir -p "$HOME/Applications"

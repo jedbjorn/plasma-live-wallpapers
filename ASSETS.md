@@ -4,9 +4,10 @@ The MIT licence in [LICENSE](LICENSE) covers the code in this repository only: t
 
 It does not cover any image or video here. That includes:
 
-- the artwork embedded in `package/contents/web/smoke-signal/assets.js` (the base image and the masks derived from it);
-- `package/contents/web/hall/still.jpg`;
-- everything under `docs/` (screenshots, previews and videos).
+- the artwork embedded in `scenes-src/smoke-signal/assets.js` (the base image and the masks derived from it);
+- `scenes-src/hall/still.jpg`;
+- everything under `docs/` (screenshots, previews and videos);
+- the look videos and posters published as release assets (made from the scenes in `scenes-src/`).
 
 No licence is granted for these files. They are included so the scenes work and so you can see what they look like.
 

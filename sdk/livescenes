@@ -1,0 +1,817 @@
+#!/usr/bin/env python3
+"""livescenes: make, check, install and publish Live Scenes looks.
+
+A look is a seamlessly looping video used as a wallpaper by the Live Scenes apps (Linux/Plasma, macOS,
+Android). This tool turns any video (a Blender or After Effects render, AI video, phone footage, a screen
+capture) into a look pack as described in sdk/FORMAT.md.
+
+Needs Python 3.8+ and ffmpeg/ffprobe (with libx265) on PATH, or set $FFMPEG and $FFPROBE.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import statistics
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+FORMAT_VERSION = 1
+FPS = 30
+KEYINT = 60                      # frames: a keyframe at least every 2 s
+SIZES = {"landscape": (2560, 1440), "portrait": (1080, 2400)}
+POSTER_LONG = 640
+ID_RE = re.compile(r"^[a-z0-9-]+$")
+ANDROID_PACKAGE = "com.designsos.livescenes"
+DEFAULT_CRF = 24
+DEFAULT_PRESET = "slow"
+
+
+# --------------------------------------------------------------------------------------------- helpers
+
+class Fail(Exception):
+    pass
+
+
+def tool(name):
+    env = os.environ.get(name.upper())
+    if env:
+        return env
+    found = shutil.which(name)
+    if not found:
+        raise Fail(f"{name} not found: install ffmpeg (with libx265) or set ${name.upper()}")
+    return found
+
+
+def run(cmd, capture=False, check=True):
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE if capture else None,
+                           stderr=subprocess.PIPE if capture else None)
+    except FileNotFoundError:
+        raise Fail(f"cannot run {cmd[0]}")
+    if check and p.returncode != 0:
+        err = p.stderr.decode(errors="replace").strip() if capture and p.stderr else ""
+        raise Fail(f"command failed ({p.returncode}): {' '.join(map(str, cmd))}" + (f"\n{err}" if err else ""))
+    return p
+
+
+def ffprobe_json(path, *extra):
+    p = run([tool("ffprobe"), "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
+             *extra, str(path)], capture=True)
+    return json.loads(p.stdout or b"{}")
+
+
+def rate(s):
+    """'30000/1001' -> 29.97"""
+    try:
+        n, _, d = str(s).partition("/")
+        return float(n) / float(d or 1)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def parse_point(s):
+    try:
+        x, y = (float(v) for v in s.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected X,Y fractions like 0.5,0.4, got {s!r}")
+    if not (0 <= x <= 1 and 0 <= y <= 1):
+        raise argparse.ArgumentTypeError(f"X and Y must be between 0 and 1, got {s!r}")
+    return (x, y)
+
+
+def write_json(path, data):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def human(n):
+    return f"{n / 1e6:.1f} MB"
+
+
+def info(msg):
+    print(msg, flush=True)
+
+
+def warn(msg):
+    print(f"warning: {msg}", file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------------------------------- source probing
+
+class Source:
+    def __init__(self, path):
+        self.path = Path(path)
+        if not self.path.is_file():
+            raise Fail(f"no such file: {path}")
+        j = ffprobe_json(self.path)
+        vs = [s for s in j.get("streams", []) if s.get("codec_type") == "video"
+              and not s.get("disposition", {}).get("attached_pic")]
+        if not vs:
+            raise Fail(f"{path}: no video stream")
+        v = vs[0]
+        self.width, self.height = int(v["width"]), int(v["height"])
+        rot = 0
+        for sd in v.get("side_data_list", []):
+            if "rotation" in sd:
+                rot = int(float(sd["rotation"]))
+        if "rotate" in v.get("tags", {}):
+            rot = int(v["tags"]["rotate"])
+        if abs(rot) % 180 == 90:                  # ffmpeg auto-rotates phone footage while decoding
+            self.width, self.height = self.height, self.width
+        self.fps = rate(v.get("avg_frame_rate")) or rate(v.get("r_frame_rate"))
+        dur = v.get("duration") or j.get("format", {}).get("duration")
+        self.duration = float(dur) if dur else 0.0
+        self.transfer = v.get("color_transfer", "")
+        self.hdr = self.transfer in ("smpte2084", "arib-std-b67")
+
+
+# --------------------------------------------------------------------------------------------- pack
+
+def crop_geometry(src_w, src_h, out_w, out_h, focus):
+    """Scale to fill out_w x out_h, crop around focus. Returns (scaled_w, scaled_h, x, y, focus_in_output)."""
+    s = max(out_w / src_w, out_h / src_h)
+    sw, sh = max(out_w, round(src_w * s)), max(out_h, round(src_h * s))
+    fx, fy = focus[0] * sw, focus[1] * sh
+    x = int(round(min(max(fx - out_w / 2, 0), sw - out_w)))
+    y = int(round(min(max(fy - out_h / 2, 0), sh - out_h)))
+    out_focus = (round((fx - x) / out_w, 3), round((fy - y) / out_h, 3))
+    return sw, sh, x, y, out_focus, (out_w * out_h) / (sw * sh), s
+
+
+def loop_filter(start_frames, length_frames, fade_frames):
+    """Filter chain (input [0:v]) that cuts [start, start+length+fade) at 30 fps and crossfades the extra
+    tail into the head, so the result is `length` long and its last frame flows into its first."""
+    L, F = length_frames, fade_frames
+    head = f"[0:v]fps={FPS},trim=start_frame={start_frames}:end_frame={start_frames + L + F},setpts=PTS-STARTPTS"
+    if F == 0:
+        return head
+    return (f"{head},split[a][b];"
+            f"[a]trim=start_frame={F}:end_frame={L + F},setpts=PTS-STARTPTS[m];"
+            f"[b]trim=end_frame={F},setpts=PTS-STARTPTS[h];"
+            f"[m][h]xfade=transition=fade:duration={F / FPS:.6f}:offset={(L - F) / FPS:.6f}")
+
+
+def tonemap_chain():
+    # HDR (HLG/PQ, e.g. iPhone footage) to SDR BT.709
+    return ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
+            "zscale=t=bt709:m=bt709:r=tv")
+
+
+ROTATIONS = {"cw": (90, "transpose=1"), "ccw": (-90, "transpose=2")}
+
+
+def rotate_point(p, rotate):
+    """A point (fractions) of the source, after rotating the picture 90 degrees cw or ccw."""
+    if rotate == "cw":
+        return (1 - p[1], p[0])
+    if rotate == "ccw":
+        return (p[1], 1 - p[0])
+    return p
+
+
+def encode(src, seek, start_frames, length_frames, fade_frames, out_w, out_h, focus, crf, preset, out_path, label,
+           extra_x265="", rotate=None):
+    src_w, src_h = (src.height, src.width) if rotate else (src.width, src.height)
+    focus = rotate_point(focus, rotate)
+    sw, sh, x, y, out_focus, kept, scale = crop_geometry(src_w, src_h, out_w, out_h, focus)
+    if kept < 0.5:
+        warn(f"{label}: cropping {src_w}x{src_h} to {out_w}x{out_h} keeps only {kept:.0%} of the picture")
+    if scale > 1.05:
+        warn(f"{label}: upscaling {src_w}x{src_h} by {scale:.2f}x; a larger source would look sharper")
+    chain = loop_filter(start_frames, length_frames, fade_frames)
+    if src.hdr:
+        info(f"{label}: HDR source ({src.transfer}), tone-mapping to SDR")
+        chain += "," + tonemap_chain()
+    if rotate:
+        chain += "," + ROTATIONS[rotate][1]
+    chain += (f",scale={sw}:{sh}:flags=lanczos+accurate_rnd+full_chroma_int,crop={out_w}:{out_h}:{x}:{y},setsar=1,"
+              f"scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[out]")
+    x265 = (f"keyint={KEYINT}:min-keyint={FPS}:open-gop=0:aq-mode=3:log-level=error:"
+            "colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited")
+    if extra_x265:                       # ours come last so keyframe settings can't be overridden
+        x265 = extra_x265 + ":" + x265
+    cmd = [tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-stats", "-y",
+           "-ss", f"{seek:.3f}", "-t", f"{(length_frames + fade_frames) / FPS + 1:.3f}", "-i", str(src.path),
+           "-filter_complex", chain, "-map", "[out]", "-an", "-sn", "-dn", "-map_metadata", "-1",
+           "-c:v", "libx265", "-preset", preset, "-crf", str(crf), "-profile:v", "main", "-pix_fmt", "yuv420p",
+           "-x265-params", x265, "-tag:v", "hvc1",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+           "-r", str(FPS), "-fps_mode", "cfr", "-movflags", "+faststart", str(out_path)]
+    info(f"{label}: {src.path.name}{f' rotated {rotate}' if rotate else ''} -> {out_path.name} {out_w}x{out_h}, "
+         f"crf {crf}, preset {preset}")
+    run(cmd)
+    frames = count_frames(out_path)
+    if frames != length_frames:
+        raise Fail(f"{label}: got {frames} frames, expected {length_frames}: is the source long enough "
+                   f"for --start + --length + --fade?")
+    return out_focus
+
+
+def count_frames(path):
+    p = run([tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-count_packets",
+             "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)], capture=True)
+    return int(p.stdout.decode().strip().split(",")[0] or 0)
+
+
+def cmd_pack(a):
+    if not ID_RE.match(a.id):
+        raise Fail(f"--id must match [a-z0-9-]+, got {a.id!r}")
+    if a.no_landscape and a.no_portrait:
+        raise Fail("--no-landscape and --no-portrait together leave nothing to make")
+    if a.fade < 0:
+        raise Fail("--fade must be >= 0")
+    if a.portrait_rotate and a.portrait:
+        raise Fail("--portrait-rotate makes the portrait video from SRC; it cannot be combined with --portrait")
+    if a.portrait_rotate and a.no_portrait:
+        raise Fail("--portrait-rotate and --no-portrait contradict each other")
+    out = Path(a.output)
+    if out.name != a.id:
+        warn(f"the pack folder should be named after its id ({a.id}), not {out.name}")
+    src = Source(a.src)
+    psrc = Source(a.portrait) if a.portrait else None
+
+    start = a.start
+    usable = src.duration - start - a.fade
+    if psrc:
+        usable = min(usable, psrc.duration - start - a.fade)
+    length = a.length if a.length else usable
+    if length <= 0 or (src.duration and start + length + a.fade > src.duration + 0.5 / FPS):
+        raise Fail(f"source is {src.duration:.2f} s; --start {start} + --length {length:.2f} + --fade {a.fade} "
+                   f"does not fit (the fade needs that much extra footage after the loop)")
+    L, F = round(length * FPS), round(a.fade * FPS)
+    if F > L // 2:
+        raise Fail("--fade must be at most half of --length")
+    if L < FPS:
+        raise Fail("--length must be at least 1 s")
+    if abs(src.fps - FPS) > 0.01:
+        warn(f"source is {src.fps:.3f} fps; frames are resampled to {FPS} fps")
+    seek = start
+    out.mkdir(parents=True, exist_ok=True)
+
+    videos = {}
+    if not a.no_landscape:
+        w, h = SIZES["landscape"]
+        foc = encode(src, seek, 0, L, F, w, h, a.focus, a.crf, a.preset, out / "landscape.mp4", "landscape",
+                     a.x265)
+        videos["landscape"] = foc
+    if not a.no_portrait:
+        w, h = SIZES["portrait"]
+        if psrc:
+            foc = encode(psrc, seek, 0, L, F, w, h, a.portrait_focus or (0.5, 0.5), a.portrait_crf or a.crf,
+                         a.preset, out / "portrait.mp4", "portrait", a.x265)
+        else:
+            foc = encode(src, seek, 0, L, F, w, h, a.portrait_focus or a.focus, a.portrait_crf or a.crf,
+                         a.preset, out / "portrait.mp4", "portrait", a.x265, a.portrait_rotate)
+        videos["portrait"] = foc
+    for stale in ("landscape", "portrait"):
+        if stale not in videos and (out / f"{stale}.mp4").exists():
+            (out / f"{stale}.mp4").unlink()
+
+    poster_src = out / ("landscape.mp4" if "landscape" in videos else "portrait.mp4")
+    pt = min(max(a.poster_time, 0), (L - 1) / FPS)
+    run([tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{pt:.3f}", "-i", str(poster_src),
+         "-frames:v", "1", "-vf", f"scale='if(gte(iw,ih),{POSTER_LONG},-2)':'if(gte(iw,ih),-2,{POSTER_LONG})'"
+         ":flags=lanczos", "-q:v", "3", str(out / "poster.jpg")])
+
+    scene = {"format": FORMAT_VERSION, "id": a.id, "title": a.title}
+    for k in ("author", "license", "description"):
+        if getattr(a, k):
+            scene[k] = getattr(a, k)
+    scene["loop"] = round(L / FPS, 3)
+    scene["videos"] = {}
+    for orient, foc in videos.items():
+        f = out / f"{orient}.mp4"
+        w, h = SIZES[orient]
+        scene["videos"][orient] = {"file": f.name, "width": w, "height": h, "fps": FPS,
+                                   "bytes": f.stat().st_size, "sha256": sha256(f), "focus": list(foc)}
+        if orient == "portrait" and a.portrait_rotate:
+            scene["videos"][orient]["rotate"] = ROTATIONS[a.portrait_rotate][0]
+    write_json(out / "scene.json", scene)
+    info(f"\npack written: {out}/  (loop {scene['loop']} s)")
+    for orient, v in scene["videos"].items():
+        info(f"  {v['file']:<14} {v['width']}x{v['height']}  {human(v['bytes'])}  focus {v['focus']}")
+    info(f"  poster.jpg\nnext: livescenes check {out}")
+
+
+# --------------------------------------------------------------------------------------------- check
+
+class Checker:
+    def __init__(self):
+        self.failed = 0
+        self.warned = 0
+
+    def ok(self, cond, msg, detail=""):
+        print(f"{'PASS' if cond else 'FAIL'}  {msg}{('  (' + detail + ')') if detail else ''}", flush=True)
+        if not cond:
+            self.failed += 1
+        return cond
+
+    def warn(self, msg):
+        print(f"WARN  {msg}", flush=True)
+        self.warned += 1
+
+
+def mp4_top_boxes(path):
+    boxes = []
+    with open(path, "rb") as f:
+        size_total = os.fstat(f.fileno()).st_size
+        pos = 0
+        while pos + 8 <= size_total:
+            f.seek(pos)
+            hdr = f.read(8)
+            size, typ = struct.unpack(">I4s", hdr)
+            if size == 1:
+                size = struct.unpack(">Q", f.read(8))[0]
+            elif size == 0:
+                size = size_total - pos
+            if size < 8:
+                break
+            boxes.append(typ.decode("latin-1"))
+            pos += size
+    return boxes
+
+
+def gray_frames(path, w, h, extra_in=(), extra_out=()):
+    """Decode a stretch of video as small grayscale frames (list of bytes)."""
+    cmd = [tool("ffmpeg"), "-hide_banner", "-loglevel", "error", *extra_in, "-i", str(path), *extra_out,
+           "-vf", f"scale={w}:{h}:flags=area,format=gray", "-f", "rawvideo", "-"]
+    data = run(cmd, capture=True).stdout
+    n = w * h
+    return [data[i:i + n] for i in range(0, len(data) - n + 1, n)]
+
+
+def mad(a, b):
+    return sum(map(abs, map(int.__sub__, a, b))) / len(a)
+
+
+def seam_check(c, path, label, vw, vh, key_frames):
+    """The jump from the last frame to the first must look like an ordinary frame change. The first frame is
+    always a keyframe, and keyframes change a little more than other frames (fresh compression), so the jump
+    is compared with ordinary changes near the seam and with the changes into the video's other keyframes."""
+    long_side = 192
+    w, h = (long_side, max(2, round(long_side * vh / vw / 2) * 2)) if vw >= vh else \
+        (max(2, round(long_side * vw / vh / 2) * 2), long_side)
+    fr = gray_frames(path, w, h)
+    if len(fr) < 4:
+        c.ok(False, f"{label}: loop seam", "could not decode frames")
+        return
+    near = min(len(fr) // 2, 4 * FPS)                  # 4 s on each side of the seam
+    local = [mad(x, y) for x, y in zip(fr[:near], fr[1:near])] + \
+            [mad(x, y) for x, y in zip(fr[-near:], fr[-near + 1:])]
+    keyed = sorted(mad(fr[k - 1], fr[k]) for k in key_frames if 0 < k < len(fr))
+    seam = mad(fr[-1], fr[0])
+    med = statistics.median(local)
+    p95 = sorted(local)[int(0.95 * (len(local) - 1))]
+    kf = 1.5 * keyed[int(0.9 * (len(keyed) - 1))] if keyed else 0.0
+    limit = max(2.0 * med, p95, kf, 0.3)
+    c.ok(seam <= limit, f"{label}: loop seam is smooth",
+         f"last->first change {seam:.2f}; near the seam: typical {med:.2f}, 95th pct {p95:.2f}; "
+         f"into keyframes: {kf / 1.5 if keyed else 0:.2f} (90th pct); limit {limit:.2f}")
+
+
+def check_video(c, pack, orient, v, loop):
+    label = orient
+    f = pack / str(v.get("file", ""))
+    if not c.ok(f.is_file(), f"{label}: file {v.get('file')} exists"):
+        return
+    size = f.stat().st_size
+    c.ok(size == v.get("bytes"), f"{label}: bytes match", f"{size} on disk, {v.get('bytes')} in scene.json")
+    digest = sha256(f)
+    c.ok(digest == v.get("sha256"), f"{label}: sha256 matches")
+    j = ffprobe_json(f)
+    streams = j.get("streams", [])
+    vs = [s for s in streams if s.get("codec_type") == "video"]
+    others = [s.get("codec_type") for s in streams if s.get("codec_type") != "video"]
+    c.ok(len(vs) == 1, f"{label}: one video stream", f"{len(vs)} found")
+    c.ok(not others, f"{label}: no audio or other streams", ", ".join(others) if others else "")
+    if not vs:
+        return
+    s = vs[0]
+    c.ok(s.get("codec_name") == "hevc", f"{label}: codec HEVC", s.get("codec_name", "?"))
+    c.ok(s.get("profile") == "Main", f"{label}: profile Main", s.get("profile", "?"))
+    c.ok(s.get("pix_fmt") == "yuv420p", f"{label}: pix_fmt yuv420p (8-bit)", s.get("pix_fmt", "?"))
+    c.ok(s.get("codec_tag_string") == "hvc1", f"{label}: tag hvc1", s.get("codec_tag_string", "?"))
+    tags = [s.get(k, "unknown") for k in ("color_space", "color_primaries", "color_transfer")]
+    if tags != ["bt709"] * 3 or s.get("color_range") != "tv":
+        c.warn(f"{label}: colour is not tagged BT.709 limited range ({', '.join(tags)}, {s.get('color_range')}); "
+               "players will guess")
+    c.ok(j.get("format", {}).get("format_name", "").startswith("mov,mp4"), f"{label}: MP4 container")
+    w, h = int(s.get("width", 0)), int(s.get("height", 0))
+    c.ok((w, h) == (v.get("width"), v.get("height")), f"{label}: size {w}x{h} matches scene.json",
+         f"scene.json says {v.get('width')}x{v.get('height')}")
+    c.ok((w >= h) if orient == "landscape" else (h > w), f"{label}: orientation fits")
+    if (w, h) != SIZES[orient]:
+        c.warn(f"{label}: {w}x{h} is not the usual {SIZES[orient][0]}x{SIZES[orient][1]}")
+    r, avg = rate(s.get("r_frame_rate")), rate(s.get("avg_frame_rate"))
+    c.ok(abs(r - FPS) < 0.01 and abs(avg - FPS) < 0.01, f"{label}: constant {FPS} fps",
+         f"r_frame_rate {s.get('r_frame_rate')}, avg {s.get('avg_frame_rate')}")
+    c.ok(v.get("fps") == FPS, f"{label}: scene.json fps is {FPS}", str(v.get("fps")))
+    # packets: count, keyframe spacing
+    p = run([tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags",
+             "-of", "csv=p=0", str(f)], capture=True)
+    pk = []
+    for line in p.stdout.decode().split():
+        t, _, fl = line.partition(",")
+        try:
+            pk.append((float(t), "K" in fl))
+        except ValueError:
+            pass
+    pk.sort()
+    n = len(pk)
+    dur = n / FPS
+    if isinstance(loop, (int, float)):
+        c.ok(abs(dur - loop) <= 1.0 / FPS + 1e-6, f"{label}: duration matches loop",
+             f"{n} frames = {dur:.3f} s, loop {loop}")
+    keys = [t for t, k in pk if k]
+    if keys and pk:
+        gaps = [b - a for a, b in zip(keys, keys[1:])] + [pk[-1][0] + 1 / FPS - keys[-1]]
+        c.ok(keys[0] == pk[0][0] and max(gaps) <= 2.0 + 1e-6, f"{label}: keyframe at least every 2 s",
+             f"{len(keys)} keyframes, longest gap {max(gaps):.2f} s")
+    else:
+        c.ok(False, f"{label}: keyframes", "none found")
+    boxes = mp4_top_boxes(f)
+    c.ok("moov" in boxes and "mdat" in boxes and boxes.index("moov") < boxes.index("mdat"),
+         f"{label}: faststart (moov before mdat)", " ".join(boxes))
+    if "rotate" in v:
+        c.ok(v["rotate"] in (90, -90), f"{label}: rotate is 90 or -90", str(v["rotate"]))
+    focus = v.get("focus", [0.5, 0.5])
+    c.ok(isinstance(focus, list) and len(focus) == 2 and all(isinstance(x, (int, float)) and 0 <= x <= 1
+                                                             for x in focus), f"{label}: focus", str(focus))
+    seam_check(c, f, label, w, h, [round(t * FPS) for t in keys])
+
+
+def cmd_check(a):
+    pack = Path(a.packdir)
+    c = Checker()
+    sj = pack / "scene.json"
+    if not c.ok(sj.is_file(), "scene.json exists"):
+        return 1
+    try:
+        scene = json.loads(sj.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeDecodeError) as e:
+        c.ok(False, "scene.json is valid JSON", str(e))
+        return 1
+    c.ok(isinstance(scene, dict), "scene.json is an object")
+    if not isinstance(scene, dict):
+        return 1
+    c.ok(scene.get("format") == FORMAT_VERSION, f"format is {FORMAT_VERSION}", str(scene.get("format")))
+    sid = scene.get("id")
+    c.ok(isinstance(sid, str) and bool(ID_RE.match(sid)), "id matches [a-z0-9-]+", repr(sid))
+    if isinstance(sid, str) and pack.resolve().name != sid:
+        c.warn(f"folder is named {pack.resolve().name!r}, not after the id {sid!r}")
+    c.ok(isinstance(scene.get("title"), str) and scene["title"].strip() != "", "title is set")
+    for k in ("author", "license", "description"):
+        if k in scene:
+            c.ok(isinstance(scene[k], str), f"{k} is a string")
+        elif k != "description":
+            c.warn(f"no {k}")
+    loop = scene.get("loop")
+    c.ok(isinstance(loop, (int, float)) and loop > 0, "loop is a positive number of seconds", str(loop))
+    videos = scene.get("videos")
+    if not c.ok(isinstance(videos, dict) and videos and set(videos) <= {"landscape", "portrait"},
+                "videos has landscape and/or portrait", str(list(videos) if isinstance(videos, dict) else videos)):
+        return 1
+    for orient in ("landscape", "portrait"):
+        if orient in videos:
+            v = videos[orient]
+            if c.ok(isinstance(v, dict) and all(k in v for k in ("file", "width", "height", "fps", "bytes", "sha256")),
+                    f"{orient}: has file, width, height, fps, bytes, sha256"):
+                check_video(c, pack, orient, v, loop)
+    poster = pack / "poster.jpg"
+    if c.ok(poster.is_file(), "poster.jpg exists"):
+        j = ffprobe_json(poster)
+        s = (j.get("streams") or [{}])[0]
+        pw, ph = int(s.get("width", 0)), int(s.get("height", 0))
+        c.ok(max(pw, ph) == POSTER_LONG, f"poster is {POSTER_LONG} px on the long side", f"{pw}x{ph}")
+        c.ok(s.get("codec_name") == "mjpeg", "poster is a JPEG", s.get("codec_name", "?"))
+    print(f"\n{'FAILED' if c.failed else 'OK'}: {c.failed} failed, {c.warned} warnings")
+    return 1 if c.failed else 0
+
+
+# --------------------------------------------------------------------------------------------- add
+
+def load_scene(pack):
+    sj = Path(pack) / "scene.json"
+    if not sj.is_file():
+        raise Fail(f"{pack}: no scene.json (make one with `livescenes pack`)")
+    scene = json.loads(sj.read_text(encoding="utf-8"))
+    if not isinstance(scene, dict) or not ID_RE.match(str(scene.get("id", ""))) or not scene.get("videos"):
+        raise Fail(f"{sj}: not a valid scene.json (run `livescenes check {pack}`)")
+    return scene
+
+
+def data_dir():
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "LiveScenes"
+    if system == "Linux":
+        return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "live-scenes"
+    raise Fail(f"`add` supports Linux and macOS (and Android with --android), not {system}")
+
+
+def find_adb():
+    env = os.environ.get("ADB")
+    if env:
+        found = shutil.which(env)
+        if not found:
+            raise Fail(f"$ADB is set to {env!r}, which is not an executable")
+        return found
+    cands = [shutil.which("adb")]
+    for env in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if os.environ.get(env):
+            cands.append(str(Path(os.environ[env]) / "platform-tools" / "adb"))
+    cands.append(str(Path.home() / "Android" / "Sdk" / "platform-tools" / "adb"))
+    cands.append(str(Path.home() / "Library" / "Android" / "sdk" / "platform-tools" / "adb"))
+    for c in cands:
+        if c and Path(c).is_file() and os.access(c, os.X_OK):
+            return c
+    raise Fail("adb not found: install Android platform-tools or set $ADB")
+
+
+def add_android(pack, scene):
+    adb = find_adb()
+    sid = scene["id"]
+    p = run([adb, "get-state"], capture=True, check=False)
+    if p.returncode != 0:
+        raise Fail("no Android device: connect one with USB debugging on (adb devices)")
+    p = run([adb, "shell", "pm", "path", ANDROID_PACKAGE], capture=True, check=False)
+    if not p.stdout.strip():
+        warn(f"{ANDROID_PACKAGE} does not seem to be installed on the device")
+    dest = f"/sdcard/Android/data/{ANDROID_PACKAGE}/files/import/{sid}"
+    run([adb, "shell", "mkdir", "-p", dest])
+    files = [f for f in ("landscape.mp4", "portrait.mp4", "poster.jpg") if (pack / f).is_file()] + ["scene.json"]
+    for f in files:                                   # scene.json last: the pack is complete once it appears
+        info(f"push {f}")
+        run([adb, "push", str(pack / f), f"{dest}/{f}"])
+    # adb pushes as the shell user (dir mode 2770); without this the app cannot read or remove the files
+    run([adb, "shell", "chmod", "-R", "a+rwX", dest])
+    info(f"\npushed to {dest}/\nOpen Live Scenes on the device to import it.")
+
+
+def cmd_add(a):
+    pack = Path(a.packdir)
+    scene = load_scene(pack)
+    sid = scene["id"]
+    if a.android:
+        return add_android(pack, scene)
+    videos = scene["videos"]
+    orient = "landscape" if "landscape" in videos else "portrait"
+    if orient != "landscape":
+        warn("the pack has no landscape video; installing the portrait one (it will be cropped)")
+    v = videos[orient]
+    src = pack / v["file"]
+    if not src.is_file():
+        raise Fail(f"missing {src}")
+    if src.stat().st_size != v.get("bytes") or sha256(src) != v.get("sha256"):
+        raise Fail(f"{src} does not match scene.json (bytes/sha256); re-run `livescenes pack`")
+
+    root = data_dir()
+    look = root / "looks" / sid
+    look.mkdir(parents=True, exist_ok=True)
+    tmp = look / f".{orient}.mp4.part"
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, look / f"{orient}.mp4")
+    for other in ("landscape.mp4", "portrait.mp4"):
+        if other != f"{orient}.mp4" and (look / other).exists():
+            (look / other).unlink()
+    if (pack / "poster.jpg").is_file():
+        shutil.copyfile(pack / "poster.jpg", look / "poster.jpg")
+    saved = dict(scene)
+    saved["videos"] = {orient: v}                     # only the file that is on this device
+    write_json(look / "scene.json", saved)
+
+    pf = root / "profiles.json"
+    data = {"format": FORMAT_VERSION, "active": None, "profiles": []}
+    if pf.is_file():
+        try:
+            data = json.loads(pf.read_text(encoding="utf-8"))
+        except ValueError:
+            raise Fail(f"{pf} is not valid JSON; fix or remove it")
+        data.setdefault("format", FORMAT_VERSION)
+        data.setdefault("profiles", [])
+    profiles = data["profiles"]
+    prof = next((p for p in profiles if p.get("look") == sid), None)
+    if prof:
+        info(f"profile {prof.get('id')!r} already uses look {sid!r}; files updated")
+    else:
+        ids = {p.get("id") for p in profiles}
+        pid, n = sid, 2
+        while pid in ids:
+            pid, n = f"{sid}-{n}", n + 1
+        prof = {"id": pid, "name": scene.get("title") or sid, "look": sid, "speed": 1.0}
+        profiles.append(prof)
+        info(f"added profile {pid!r}")
+    if not data.get("active") or data["active"] not in {p.get("id") for p in profiles}:
+        data["active"] = prof["id"]
+        info(f"active profile: {prof['id']!r}")
+    write_json(pf, data)
+    info(f"installed {sid} ({orient}) in {look}/")
+
+
+# --------------------------------------------------------------------------------------------- catalog
+
+def cmd_catalog(a):
+    rel = Path(a.output)
+    rel.mkdir(parents=True, exist_ok=True)
+    cat_path = rel / "catalog.json"
+    looks = []
+    if a.append and cat_path.is_file():
+        looks = json.loads(cat_path.read_text(encoding="utf-8")).get("looks", [])
+    for pack in map(Path, a.packdirs):
+        scene = load_scene(pack)
+        sid = scene["id"]
+        entry = {"id": sid, "title": scene.get("title", sid)}
+        for k in ("author", "license", "description"):
+            if k in scene:
+                entry[k] = scene[k]
+        entry["loop"] = scene.get("loop")
+        if (pack / "poster.jpg").is_file():
+            copy_asset(pack / "poster.jpg", rel / f"{sid}-poster.jpg")
+            entry["poster"] = f"{sid}-poster.jpg"
+        entry["videos"] = {}
+        for orient in ("landscape", "portrait"):
+            v = scene["videos"].get(orient)
+            if not v:
+                continue
+            src = pack / v["file"]
+            name = f"{sid}-{orient}.mp4"
+            copy_asset(src, rel / name)
+            digest = sha256(rel / name)
+            if digest != v.get("sha256"):
+                raise Fail(f"{src}: sha256 does not match scene.json; run `livescenes check {pack}`")
+            entry["videos"][orient] = {"url": name, "width": v["width"], "height": v["height"],
+                                       "bytes": (rel / name).stat().st_size, "sha256": digest,
+                                       "focus": v.get("focus", [0.5, 0.5])}
+            if "rotate" in v:
+                entry["videos"][orient]["rotate"] = v["rotate"]
+        looks = [l for l in looks if l.get("id") != sid] + [entry]
+        info(f"{sid}: " + ", ".join(f"{o} {human(e['bytes'])}" for o, e in entry["videos"].items()))
+    write_json(cat_path, {"format": FORMAT_VERSION, "looks": looks})
+    info(f"\nwrote {cat_path} ({len(looks)} looks). Upload everything in {rel}/ as release assets.")
+
+
+def copy_asset(src, dst):
+    if dst.exists() and dst.stat().st_size == src.stat().st_size and sha256(dst) == sha256(src):
+        return
+    shutil.copyfile(src, dst)
+
+
+# --------------------------------------------------------------------------------------------- CLI
+
+HELP = __doc__ + """
+typical session:
+  livescenes pack render.mov -o packs/aurora --id aurora --title "Aurora" --author "Me" --license CC-BY-4.0
+  livescenes check packs/aurora
+  livescenes add packs/aurora            # this desktop
+  livescenes add packs/aurora --android  # a phone over adb
+  livescenes catalog packs/* -o release/
+
+Run `livescenes <command> --help` for details.
+"""
+
+PACK_HELP = """Make a look pack: a folder with landscape.mp4 (2560x1440), portrait.mp4 (1080x2400), poster.jpg
+and scene.json, as described in sdk/FORMAT.md.
+
+The loop: the video is cut from --start, --length seconds long. To make it seamless, the pack uses
+--fade more seconds of footage after the loop and crossfades them into its start, so the source must be
+at least start + length + fade long. Render or record a little longer than the loop you want. If your
+source already loops perfectly (e.g. a cyclic Blender render), use --fade 0.
+
+Sizes: each video is scaled to fill its frame and cropped around the focus point. Without --portrait,
+the portrait video is cropped out of SRC (a narrow vertical slice of a landscape source), so give a
+--portrait-focus on what matters, supply a separately rendered portrait version with --portrait, or use
+--portrait-rotate to turn the whole landscape picture sideways for phones.
+Footage is resampled to 30 fps, encoded as HEVC (H.265) Main 8-bit, and HDR footage is tone-mapped to SDR.
+
+The focus point is also stored in scene.json so players cropping the video for other screen shapes
+keep it in view."""
+
+PACK_EPILOG = """examples:
+  # 20 s phone clip, use 15 s of it, crossfade 2 s, keep the subject (left third) in the portrait crop
+  livescenes pack clip.mp4 -o packs/harbour --id harbour --title Harbour --length 15 --fade 2 \\
+      --portrait-focus 0.33,0.5
+
+  # Blender renders of the same animation in both orientations, already seamless
+  livescenes pack wide.mkv --portrait tall.mkv --fade 0 -o packs/orbit --id orbit --title Orbit
+
+  # landscape illustration: on phones show all of it turned sideways (upright with the phone's top to the left)
+  livescenes pack art.mkv --portrait-rotate cw -o packs/poster --id poster --title Poster
+
+  # desktop only
+  livescenes pack ae-export.mov --no-portrait -o packs/grid --id grid --title Grid"""
+
+
+def build_parser():
+    ap = argparse.ArgumentParser(prog="livescenes", description=HELP,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", metavar="command", title="commands")
+
+    p = sub.add_parser("pack", help="make a look pack (videos, poster, scene.json) from a video", description=PACK_HELP, epilog=PACK_EPILOG,
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("src", metavar="SRC", help="source video (any format ffmpeg reads)")
+    p.add_argument("-o", "--output", metavar="OUTDIR", required=True,
+                   help="pack folder to write; name it after the id (e.g. packs/aurora)")
+    p.add_argument("--id", required=True, help="look id: lowercase letters, digits and dashes, e.g. aurora")
+    p.add_argument("--title", required=True, help="name shown in the apps")
+    p.add_argument("--author", help="who made it (shown as credit)")
+    p.add_argument("--license", help="licence of the video, e.g. CC-BY-4.0, MIT, 'All rights reserved'")
+    p.add_argument("--description", help="one sentence about the look")
+    p.add_argument("--portrait", metavar="SRC2",
+                   help="separate portrait source (same timing as SRC); default: crop the portrait from SRC")
+    p.add_argument("--start", type=float, default=0.0, metavar="S", help="where the loop starts in the source, "
+                   "in seconds (default 0)")
+    p.add_argument("--length", type=float, metavar="S", help="loop length in seconds (default: all the footage "
+                   "after --start minus --fade)")
+    p.add_argument("--fade", type=float, default=1.5, metavar="S",
+                   help="crossfade that makes the loop seamless, in seconds (default 1.5; 0 = SRC already loops)")
+    p.add_argument("--focus", type=parse_point, default=(0.5, 0.5), metavar="X,Y",
+                   help="point of interest in SRC as fractions of its width and height (0..1, default 0.5,0.5); "
+                        "crops keep it in view")
+    p.add_argument("--portrait-focus", type=parse_point, metavar="X,Y",
+                   help="point of interest for the portrait video, in its source (SRC2, or SRC when the portrait "
+                        "is made from it); default: --focus (0.5,0.5 with --portrait)")
+    p.add_argument("--portrait-rotate", choices=("cw", "ccw"),
+                   help="make the portrait video from SRC turned 90 degrees clockwise (cw) or counter-clockwise "
+                        "(ccw) instead of cropping a slice of it: the whole landscape composition fills the phone "
+                        "and reads upright when the phone is turned sideways. --portrait-focus is still given in "
+                        "SRC's own (unrotated) coordinates. Recorded as \"rotate\": 90 or -90 in scene.json")
+    p.add_argument("--no-portrait", action="store_true", help="make only the landscape video")
+    p.add_argument("--no-landscape", action="store_true", help="make only the portrait video")
+    p.add_argument("--crf", type=int, default=DEFAULT_CRF, metavar="N",
+                   help=f"x265 quality, lower = better and bigger (default {DEFAULT_CRF}; 20-28 is sensible; "
+                        "grain and noise need more bits)")
+    p.add_argument("--portrait-crf", type=int, metavar="N", help="quality for the portrait video (default: --crf)")
+    p.add_argument("--preset", default=DEFAULT_PRESET,
+                   help=f"x265 preset: slower = smaller at the same quality (default {DEFAULT_PRESET})")
+    p.add_argument("--x265", metavar="PARAMS", default="",
+                   help="extra x265 parameters, e.g. aq-strength=1.3:psy-rd=2 (keyframe and GOP settings are fixed)")
+    p.add_argument("--poster-time", type=float, default=0.0, metavar="S",
+                   help="moment of the loop used for poster.jpg, in seconds (default 0)")
+
+    p = sub.add_parser("check", help="validate a look pack: format, encoding, checksums, loop seam",
+                       description="Validate a look pack against sdk/FORMAT.md: scene.json fields, video codec, "
+                       "profile, pixel format, hvc1 tag, 30 fps CFR, duration = loop, keyframe spacing, "
+                       "faststart, no audio, sizes and checksums, and that the loop seam (last frame -> first "
+                       "frame) is no bigger a change than the motion around it. Prints PASS/FAIL lines and "
+                       "exits non-zero if anything fails.")
+    p.add_argument("packdir", metavar="PACKDIR")
+
+    p = sub.add_parser("add", help="install a pack here, or push it to an Android phone",
+                       description="Install a look pack on this computer: its landscape video, poster and "
+                       "scene.json go to the Live Scenes saved-data folder (~/.local/share/live-scenes/ on Linux, "
+                       "~/Library/Application Support/LiveScenes/ on macOS) and a profile for it is added to "
+                       "profiles.json. The active profile only changes if there is none.\n\n"
+                       "With --android, the pack is pushed with adb to the Live Scenes app on a connected phone "
+                       "(USB debugging on); the app imports it the next time it opens. adb is found via $ADB, "
+                       "PATH, $ANDROID_HOME or ~/Android/Sdk.",
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("packdir", metavar="PACKDIR")
+    p.add_argument("--android", action="store_true", help="push to a phone over adb instead")
+
+    p = sub.add_parser("catalog", help="write release assets and catalog.json for one or more packs",
+                       description="Copy the packs' files into RELEASEDIR as flat release assets "
+                       "(<id>-landscape.mp4, <id>-portrait.mp4, <id>-poster.jpg) and write catalog.json with "
+                       "URLs relative to it. Upload the folder's contents as GitHub Release assets (or to any web "
+                       "server) and point the apps' catalog URL at catalog.json.",
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("packdirs", metavar="PACKDIR", nargs="+")
+    p.add_argument("-o", "--output", metavar="RELEASEDIR", required=True)
+    p.add_argument("--append", action="store_true",
+                   help="keep looks already listed in RELEASEDIR/catalog.json (same ids are replaced)")
+    return ap
+
+
+def main(argv=None):
+    ap = build_parser()
+    a = ap.parse_args(argv)
+    if not a.cmd:
+        ap.print_help()
+        return 2
+    try:
+        return {"pack": cmd_pack, "check": cmd_check, "add": cmd_add, "catalog": cmd_catalog}[a.cmd](a) or 0
+    except Fail as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
