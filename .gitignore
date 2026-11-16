@@ -10,3 +10,6 @@
 Thumbs.db
 .directory
 macos/build/
+android/build/
+# SDK outputs (look packs, release assets, captures)
+build/

@@ -1,4 +1,4 @@
-// Live Scenes for macOS: runs the scene pages from package/contents/web as the
+// Live Scenes for macOS: runs the scene pages (bundled from scenes-src/) as the
 // desktop wallpaper. One borderless window per screen sits at desktop level,
 // below the icons, and ignores the mouse. Settings live in the menu bar.
 
