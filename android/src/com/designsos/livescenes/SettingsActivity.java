@@ -5,11 +5,18 @@ import android.app.AlertDialog;
 import android.app.WallpaperInfo;
 import android.app.WallpaperManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
 import android.graphics.Typeface;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -23,19 +30,24 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.util.List;
 
 import static com.designsos.livescenes.Ui.dp;
 
 /**
- * The app: saved profiles, the catalog, and settings. Also the wallpaper picker's settings screen.
+ * The app: saved profiles, the catalog, settings, and updates of the app itself. Also the wallpaper picker's
+ * settings screen.
  * Changes apply to the running wallpaper at once (it listens to {@link Store}).
  */
 public class SettingsActivity extends Activity {
     Prefs prefs;
     Store store;
-    LinearLayout box, statusBox, profilesBox, catalogBox, batteryBox;
-    TextView catalogStatus;
+    LinearLayout box, statusBox, updateBox, profilesBox, catalogBox, batteryBox;
+    TextView catalogStatus, updateNote;
+    Update.Info update;          // a newer release, if the last check found one
+    String updateStatus;         // what the update is doing, or why it failed
+    boolean updating, gone;
     String orientation;
     List<Catalog.Entry> catalog;
     int catalogRequest;
@@ -62,6 +74,8 @@ public class SettingsActivity extends Activity {
 
         statusBox = column();
         box.addView(statusBox);
+        updateBox = column();
+        box.addView(updateBox);
         heading("Profiles");
         profilesBox = column();
         box.addView(profilesBox);
@@ -85,12 +99,21 @@ public class SettingsActivity extends Activity {
         store.addListener(onStore);
         renderProfiles();
         loadCatalog();
+
+        IntentFilter status = new IntentFilter(Update.ACTION_STATUS);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(onInstaller, status, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(onInstaller, status);
+        String test = getIntent().getStringExtra("updateUrl");
+        if (test != null && Update.debuggable(this)) Update.testManifest = test;
+        checkUpdate(false);
     }
 
     @Override
     protected void onDestroy() {
         store.removeListener(onStore);
+        unregisterReceiver(onInstaller);
         catalogRequest++;
+        gone = true;
         super.onDestroy();
     }
 
@@ -132,6 +155,107 @@ public class SettingsActivity extends Activity {
             }
         }
     }
+
+    // ---- updates of the app
+
+    /** Looks for a newer release: at most once a day, unless asked for with the button (Advanced). */
+    void checkUpdate(boolean asked) {
+        if (updating) return;
+        if (asked) updateNote.setText("Checking…");
+        Ui.IO.execute(() -> {
+            try {
+                Update.Info found = Update.check(this, asked);
+                runOnUiThread(() -> {
+                    if (updating) return;
+                    update = found;
+                    updateStatus = null;
+                    renderUpdate();
+                    if (asked) updateNote.setText(found != null ? "" : "This is the latest version.");
+                });
+            } catch (Exception e) {
+                // offline, or no release to read: only worth telling someone who asked
+                Log.i(LiveWallpaperService.TAG, "update check: " + e.getMessage());
+                if (asked) runOnUiThread(() -> updateNote.setText("Couldn't check: " + e.getMessage()));
+            }
+        });
+    }
+
+    void renderUpdate() {
+        updateBox.removeAllViews();
+        if (update == null) return;
+        LinearLayout card = column();
+        card.setBackground(Ui.card(this, true));
+        card.setPadding(dp(this, 16), dp(this, 12), dp(this, 8), dp(this, 4));
+        card.addView(Ui.bold(this, "Live Scenes " + update.version + " is available", 17));
+        TextView sub = Ui.text(this, updateStatus != null ? updateStatus
+                : "You have " + Update.installed(this).versionName + ". The update is a " + Ui.size(this, update.bytes)
+                        + " download; your profiles and saved looks are kept.", 14);
+        sub.setAlpha(0.8f);
+        card.addView(sub, Ui.wide(dp(this, 2)));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END);
+        if (update.notes.startsWith("https://")) {
+            Button notes = Ui.flatButton(this, "What's new");
+            notes.setOnClickListener(v -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(update.notes)));
+                } catch (ActivityNotFoundException e) {
+                    Toast.makeText(this, "No browser to open " + update.notes, Toast.LENGTH_LONG).show();
+                }
+            });
+            actions.addView(notes);
+        }
+        Button go = Ui.flatButton(this, "Update");
+        go.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        go.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
+        go.setEnabled(!updating);
+        go.setOnClickListener(v -> startUpdate());
+        actions.addView(go);
+        card.addView(actions, Ui.wide(0));
+        updateBox.addView(card, Ui.wide(dp(this, 8)));
+    }
+
+    void showUpdate(String s, boolean busy) {
+        updateStatus = s;
+        updating = busy;
+        renderUpdate();
+    }
+
+    /** Downloads the release's APK, checks it, and passes it to the system installer (which asks the user). */
+    void startUpdate() {
+        if (updating || update == null) return;
+        Update.Info u = update;
+        showUpdate("Downloading…", true);
+        Ui.IO.execute(() -> {
+            try {
+                File apk = Update.download(this, u, (done, total) -> runOnUiThread(() -> {
+                    if (updating) showUpdate("Downloading " + Ui.size(this, done) + " of " + Ui.size(this, u.bytes) + "…", true);
+                }), () -> gone);
+                String problem = Update.problem(this, apk);
+                if (problem == null) Update.install(this, apk);
+                runOnUiThread(() -> showUpdate(problem != null ? problem : "Waiting for Android to install it…", problem == null));
+            } catch (Exception e) {
+                runOnUiThread(() -> showUpdate("The update failed: " + e.getMessage(), false));
+            }
+        });
+    }
+
+    /** The system installer's answers (Update.install). After a successful install this process is replaced. */
+    final BroadcastReceiver onInstaller = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            int status = i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirm = i.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) startActivity(confirm);   // Android's "update this app?" screen
+            } else if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
+                showUpdate(null, false);                     // cancelled by the user
+            } else if (status != PackageInstaller.STATUS_SUCCESS) {
+                String why = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                showUpdate("Android didn't install the update" + (why != null ? ": " + why : "."), false);
+            }
+        }
+    };
 
     // ---- profiles
 
@@ -460,6 +584,16 @@ public class SettingsActivity extends Activity {
         buttons.addView(save);
         buttons.addView(reset);
         box.addView(buttons);
+
+        LinearLayout version = new LinearLayout(this);
+        version.setGravity(Gravity.CENTER_VERTICAL);
+        version.addView(Ui.text(this, "Version " + Update.installed(this).versionName, 15),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button check = Ui.flatButton(this, "Check for updates");
+        check.setOnClickListener(v -> checkUpdate(true));
+        version.addView(check);
+        box.addView(version, Ui.wide(dp(this, 8)));
+        updateNote = note("");
 
         // Recent Android reports Developer options and USB debugging as off to apps, but the wireless debugging
         // switch is readable: show this while it's on, or while the option is on (so it can be turned off)
