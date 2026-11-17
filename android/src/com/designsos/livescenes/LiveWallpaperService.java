@@ -1,22 +1,32 @@
 package com.designsos.livescenes;
 
 import android.app.WallpaperColors;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.database.ContentObserver;
 import android.graphics.Bitmap;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.service.wallpaper.WallpaperService;
 import android.util.Log;
+import android.view.Surface;
 import android.view.SurfaceHolder;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Live Scenes for Android: plays the active profile's look, a seamlessly looping video (sdk/FORMAT.md),
  * as the live wallpaper. Without a profile it plays the look bundled in the APK.
  * Decoding is in hardware straight to the wallpaper's surface (see {@link VideoLoop}); hidden = paused.
+ * On low battery (below the level set in the app, and not charging) nothing plays: the player is released and
+ * one frame of the look is drawn as a still image, so no decoder, thread or GL is left running.
  */
 public class LiveWallpaperService extends WallpaperService {
     static final String TAG = "LiveScenes";
@@ -29,28 +39,59 @@ public class LiveWallpaperService extends WallpaperService {
     // the lock does nothing while the screen is off. (Plugged in, Android's own "Stay awake" does this.)
 
     static final String ADB_WIFI = "adb_wifi_enabled";
-    Prefs awakePrefs;
+    Prefs prefs;
     PowerManager.WakeLock awakeLock;
     final ContentObserver adbWifiObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
         @Override public void onChange(boolean self) { updateAwake(); }
     };
-    final SharedPreferences.OnSharedPreferenceChangeListener awakePrefListener = (sp, key) -> {
+    final SharedPreferences.OnSharedPreferenceChangeListener prefListener = (sp, key) -> {
         if (Prefs.DEV_AWAKE.equals(key)) updateAwake();
+        else if (Prefs.FREEZE_BELOW.equals(key)) updateFrozen();
     };
+
+    // ---- low battery: a still frame instead of the video
+
+    final List<VideoEngine> engines = new ArrayList<>();
+    int batteryPct = 100;
+    boolean charging, frozen;
+    final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { readBattery(i); }
+    };
+
+    void readBattery(Intent i) {
+        if (i == null) return;
+        int level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1), scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+        if (level < 0 || scale <= 0) return;
+        batteryPct = level * 100 / scale;
+        charging = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+        updateFrozen();
+    }
+
+    void updateFrozen() {
+        int below = prefs.freezeBelow();
+        boolean f = below > 0 && !charging && batteryPct < below;
+        if (f == frozen) return;
+        frozen = f;
+        Log.i(TAG, f ? "battery " + batteryPct + "% < " + below + "%: still frame" : "battery " + batteryPct + "%"
+                + (charging ? ", charging" : "") + ": playing");
+        for (VideoEngine e : engines) e.restart();
+    }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        awakePrefs = new Prefs(this);
-        awakePrefs.p.registerOnSharedPreferenceChangeListener(awakePrefListener);
+        prefs = new Prefs(this);
+        prefs.p.registerOnSharedPreferenceChangeListener(prefListener);
         getContentResolver().registerContentObserver(Settings.Global.getUriFor(ADB_WIFI), false, adbWifiObserver);
         updateAwake();
+        readBattery(registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED)));   // sticky: the current state
     }
 
     @Override
     public void onDestroy() {
+        unregisterReceiver(batteryReceiver);
         getContentResolver().unregisterContentObserver(adbWifiObserver);
-        awakePrefs.p.unregisterOnSharedPreferenceChangeListener(awakePrefListener);
+        prefs.p.unregisterOnSharedPreferenceChangeListener(prefListener);
         if (awakeLock != null && awakeLock.isHeld()) awakeLock.release();
         super.onDestroy();
     }
@@ -66,7 +107,7 @@ public class LiveWallpaperService extends WallpaperService {
 
     @SuppressWarnings("deprecation")   // SCREEN_BRIGHT_WAKE_LOCK: a service has no window for FLAG_KEEP_SCREEN_ON
     void updateAwake() {
-        boolean want = awakePrefs.devAwake() && wirelessDebugging(this);
+        boolean want = prefs.devAwake() && wirelessDebugging(this);
         if (awakeLock == null) {
             awakeLock = getSystemService(PowerManager.class)
                     .newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "LiveScenes:wireless-debugging");
@@ -84,6 +125,8 @@ public class LiveWallpaperService extends WallpaperService {
         int w, h;
         String colorsLook;
         WallpaperColors colors;
+        Bitmap still;          // low battery: the frame on screen instead of the video
+        int stillRequest;
         final Runnable onStore = this::update;
 
         @Override
@@ -93,10 +136,12 @@ public class LiveWallpaperService extends WallpaperService {
             setOffsetNotificationsEnabled(false);
             store = Store.get(LiveWallpaperService.this);
             store.addListener(onStore);
+            engines.add(this);
         }
 
         @Override
         public void onDestroy() {
+            engines.remove(this);
             store.removeListener(onStore);
             stop();
             super.onDestroy();
@@ -125,6 +170,7 @@ public class LiveWallpaperService extends WallpaperService {
         public void onSurfaceRedrawNeeded(SurfaceHolder holder) {
             super.onSurfaceRedrawNeeded(holder);
             if (player != null) player.redraw();
+            else if (still != null) drawStill(still);
         }
 
         @Override
@@ -137,8 +183,13 @@ public class LiveWallpaperService extends WallpaperService {
         @Override
         public void onVisibilityChanged(boolean visible) {
             super.onVisibilityChanged(visible);
-            if (player != null) player.setPaused(!visible);
+            updatePaused();
         }
+
+        void updatePaused() { if (player != null) player.setPaused(!isVisible()); }
+
+        /** Low battery started or ended: the same look, as a still or playing. */
+        void restart() { if (w > 0 && h > 0) start(video != null ? video : playable()); }
 
         /** Profiles changed: another look restarts playback, a new speed just changes the clock. */
         void update() {
@@ -159,13 +210,46 @@ public class LiveWallpaperService extends WallpaperService {
             stop();
             if (w <= 0 || h <= 0 || !getSurfaceHolder().getSurface().isValid()) return;
             video = v;
-            Log.i(TAG, "engine " + (isPreview() ? "(preview) " : "") + w + "x" + h + ": " + v.look + " at " + v.speed + "x");
-            player = new VideoLoop(LiveWallpaperService.this, v, getSurfaceHolder().getSurface(), w, h,
-                    !isVisible(), true, e -> main.post(() -> failed(v)));
+            Log.i(TAG, "engine " + (isPreview() ? "(preview) " : "") + w + "x" + h + ": " + v.look
+                    + (frozen ? " as a still (low battery)" : " at " + v.speed + "x"));
+            if (frozen) showStill(v);
+            else play(v, !isVisible());
             if (!v.look.equals(colorsLook)) {
                 colorsLook = v.look;
                 colors = null;
                 notifyColorsChanged();
+            }
+        }
+
+        void play(Store.Video v, boolean paused) {
+            player = new VideoLoop(LiveWallpaperService.this, v, getSurfaceHolder().getSurface(), w, h,
+                    paused, true, e -> main.post(() -> failed(v)));
+        }
+
+        /** Grabs the look's first frame off the main thread, then draws it once. */
+        void showStill(Store.Video v) {
+            int req = stillRequest;
+            Ui.IO.execute(() -> {
+                Bitmap b = Store.firstFrame(LiveWallpaperService.this, v);
+                main.post(() -> {
+                    if (req != stillRequest || video != v) return;   // stopped or replaced meanwhile
+                    if (b != null && drawStill(b)) { still = b; return; }
+                    Log.w(TAG, "no still for " + v.look + ": showing the paused video");
+                    play(v, true);   // a paused player shows its first frame and then does nothing
+                });
+            });
+        }
+
+        /** Draws the still aspect-filled around the look's focus point, like the video (GL: leaves the surface free). */
+        boolean drawStill(Bitmap b) {
+            Surface s = getSurfaceHolder().getSurface();
+            if (w <= 0 || h <= 0 || !s.isValid()) return false;
+            try {
+                GlCrop.drawStill(s, b, GlCrop.crop(b.getWidth(), b.getHeight(), w, h, video.focusX, video.focusY));
+                return true;
+            } catch (RuntimeException e) {
+                Log.w(TAG, "can't draw the still", e);
+                return false;
             }
         }
 
@@ -177,6 +261,8 @@ public class LiveWallpaperService extends WallpaperService {
 
         void stop() {
             if (player != null) { player.release(); player = null; }
+            still = null;
+            stillRequest++;
         }
 
         /** Colors for the system theme, from the look's poster. */

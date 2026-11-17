@@ -34,7 +34,7 @@ import static com.designsos.livescenes.Ui.dp;
 public class SettingsActivity extends Activity {
     Prefs prefs;
     Store store;
-    LinearLayout box, statusBox, profilesBox, catalogBox;
+    LinearLayout box, statusBox, profilesBox, catalogBox, batteryBox;
     TextView catalogStatus;
     String orientation;
     List<Catalog.Entry> catalog;
@@ -73,6 +73,13 @@ public class SettingsActivity extends Activity {
         catalogStatus = note("");
         catalogBox = column();
         box.addView(catalogBox);
+
+        heading("Battery");
+        batteryBox = new LinearLayout(this);
+        box.addView(batteryBox, Ui.wide(0));
+        renderBattery();
+        note("Below this battery level the wallpaper shows a still image and the video player is shut down, to save battery. "
+                + "It plays again while charging or once the battery is back above the level.");
 
         renderAdvanced();
         store.addListener(onStore);
@@ -399,6 +406,31 @@ public class SettingsActivity extends Activity {
     }
 
     static String cap(String s) { return Character.toUpperCase(s.charAt(0)) + s.substring(1); }
+
+    // ---- battery
+
+    void renderBattery() {
+        batteryBox.removeAllViews();
+        TextView label = Ui.text(this, "Still frame below", 15);
+        batteryBox.setGravity(Gravity.CENTER_VERTICAL);
+        batteryBox.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        int current = prefs.freezeBelow();
+        for (int level : Prefs.FREEZE_LEVELS) {
+            Button b = Ui.flatButton(this, level == 0 ? "Off" : level + "%");
+            if (level == current) {
+                b.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+                b.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
+            } else {
+                b.setAlpha(0.6f);
+            }
+            b.setContentDescription(level == 0 ? "Always play the video" : "Still frame below " + level + "% battery");
+            b.setOnClickListener(v -> {
+                prefs.p.edit().putInt(Prefs.FREEZE_BELOW, level).apply();
+                renderBattery();
+            });
+            batteryBox.addView(b);
+        }
+    }
 
     // ---- advanced + developer
 

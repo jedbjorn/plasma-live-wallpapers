@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Point;
 import android.hardware.display.DisplayManager;
+import android.media.MediaMetadataRetriever;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -337,6 +338,23 @@ final class Store {
                 : c.getAssets().open(DEFAULT_ASSETS + "/poster.jpg")) {
             return decodeSampled(in.readAllBytes(), maxSide);
         } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** The video's first frame at full size (the low-battery still), or null. */
+    static Bitmap firstFrame(Context c, Video v) {
+        try (MediaMetadataRetriever r = new MediaMetadataRetriever()) {
+            if (v.file != null) {
+                r.setDataSource(v.file.getPath());
+            } else {
+                try (AssetFileDescriptor fd = v.openAsset(c)) {
+                    r.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
+                }
+            }
+            return r.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+        } catch (IOException | RuntimeException e) {
+            Log.w(LiveWallpaperService.TAG, "first frame of " + v.key() + ": " + e);
             return null;
         }
     }
