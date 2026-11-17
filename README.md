@@ -32,8 +32,12 @@ https://github.com/user-attachments/assets/c4362d1e-b1f9-44e8-b46b-99c9e87d04bd
 - **Hall**: a concrete hall with a light slot in the wall, through one full day (daylight, golden hour, dusk, night, dawn) every 84 seconds.
 - **Smoke Signal**: a figure illustration with fluid smoke curling off a gun muzzle, seen as a failing transmission: slice glitches, RGB split, neon washes, rain, scanlines and grain. On phones the whole picture is turned sideways so it fills the screen; it reads upright with the phone turned to landscape. The illustration is unofficial Cyberpunk 2077 fan art, used under CD PROJEKT RED's Fan Content Guidelines and not approved or endorsed by them. It is the only part of the project not under the MIT licence; see [ASSETS.md](ASSETS.md).
 - **Living Water**: koi swimming under a water surface, with refraction, caustic light, ripple rings and drifting motes. It is built into the apps, so they show something before you download anything.
+- **The Surge**: an ink-drawn boy wreathed in white fire, with floating rocks, rising dust and drifting ash.
+- **Embers**: warm sparks lifting off the floor of a dark red forest.
+- **Avenue Flow**: a city at dusk from above, with traffic streaming along a long avenue and twinkling lights.
+- **Night Wind**: an ink-drawn witch under the moon, her cape billowing as wind lines streak past.
 
-The looks were made once from animated web pages, which are kept in [`scenes-src/`](scenes-src/) as their source. The apps no longer render anything live.
+The looks were made once from animated web pages, which are kept in [`scenes-src/`](scenes-src/) as their source; `sdk/capture` records such a page frame by frame into a perfect loop for `livescenes pack`. The apps no longer render anything live.
 
 ## How it works on every platform
 

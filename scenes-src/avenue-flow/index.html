@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Avenue Flow</title>
+<script src="common.js"></script>
+</head><body>
+<script>
+// Avenue Flow plus twinkling city lights. Moving traffic on the avenue; the photo's own lamps
+// (lights.png) shimmer softly and about a quarter of them dim and return, staggered across the city.
+// Twinkle cycles per loop: 2, 3, 7, 11 and 1 (all whole numbers, so they divide the 20 s loop).
+// Avenue Flow: The static traffic on the main avenue is dimmed and replaced by moving cars:
+// red tail lights climbing to the horizon, white headlights coming down, with short light trails and
+// perspective-correct speed. Sparse traffic on three side streets and sparkles on the far-left freeway.
+// Loop 20 s: each lane is a row of cells whose car pattern repeats every k cells and travels exactly k cells per loop.
+Scene({
+  title: 'Avenue Flow', L: 20,
+  textures: { uImg: 'still.jpg', uLights: 'lights.png' },
+  desktop: { cx: 0.5, cy: 0.58, zoom: 1.12 },
+  mobile: { cx: 0.514, cy: 0.61, zoom: 1.35 },
+  frag: `
+uniform sampler2D uImg, uLights; uniform float uLightsLod;
+const float YH = 1105.0;                       // horizon row, picture px
+const float WN = 1.0 / 2150.0, WF = 1.0 / 112.0;
+const int NP = 10;
+const float PY[NP] = float[](1220.,1500.,1640.,1720.,1960.,2300.,2500.,2700.,3020.,3250.);
+const float PX[NP] = float[](2684.,2668.,2680.,2690.,2710.,2732.,2765.,2790.,2840.,2868.);
+float pathX(float y){
+  float x = PX[0];
+  for(int i=0;i<NP-1;i++){ if(y >= PY[i]) x = mix(PX[i], PX[i+1], clamp((y-PY[i])/(PY[i+1]-PY[i]), 0.0, 1.0)); }
+  return x;
+}
+// one lane of cars. dx: lateral distance from lane centre (px); dir +1 = driving away (up the picture)
+float lane(float y, float dx, float dir, float N, float k, float seed, float dens, out float headAmt){
+  float d = max(y - YH, 20.0);
+  float s = (1.0/d - WN) / (WF - WN);           // 0 near .. 1 far, linear in world distance
+  float q = s * N - dir * k * uT / uL;
+  float cellPx = (WF - WN) / N * d * d;        // screen length of one cell here
+  float infl = max(1.0, uPx * 0.45);
+  float r = max(2.4, 0.0034 * d) * infl;       // lamp radius, never thinner than ~1 screen px
+  float sh = min(r / cellPx, 0.75);            // head sigma in cells
+  float lat = exp(-(dx*dx) / (r*r*1.3)) / mix(1.0, infl * infl, 0.6);   // fatter lamps get dimmer, so small previews do not glow thick
+  float acc = 0.0; headAmt = 0.0;
+  for(int j=-1;j<=1;j++){
+    float c = floor(q) + float(j);
+    float id = mod(c, k) + seed * 131.0;      // period k cells: after one loop (k cells of travel) the lane looks identical
+    if(h11(id) > dens) continue;
+    float pos = c + 0.25 + 0.5 * h11(id + 0.37);
+    float dd = (q - pos) * dir;                // >0 ahead of the car, <0 behind it
+    float head = exp(-(dd*dd)/(sh*sh));
+    float trail = dd < 0.0 ? 0.55 * exp(dd / (0.30 + 1.2*sh)) : 0.0;
+    float b = 0.65 + 0.35 * h11(id + 0.71);
+    acc += b * max(head, trail); headAmt += b * head;
+  }
+  return acc * lat;
+}
+void main(){
+  vec2 uv = imgUV(); vec2 P = uv * IMG;
+  vec3 img = texture(uImg, uv).rgb;
+  vec3 lt = texture(uLights, uv).rgb;
+  vec3 col = img;
+  float d = max(P.y - YH, 20.0);
+  vec3 RED = vec3(1.0, 0.16, 0.07), WHITE = vec3(1.0, 0.93, 0.82), AMBER = vec3(1.0, 0.55, 0.2);
+  vec3 add = vec3(0.0);
+  // ---- main avenue ----
+  float ax = P.x - pathX(P.y);
+  float hw = max(3.4, 0.0125 * d);             // lane offset from the centre line
+  float vis = smoothstep(1212.0, 1232.0, P.y) * (1.0 - smoothstep(3080.0, 3230.0, P.y));
+  vis *= 1.0 - smoothstep(1520.0, 1545.0, P.y) * (1.0 - smoothstep(1668.0, 1700.0, P.y));   // dip hidden by buildings
+  if(abs(ax) < hw * 5.0 + 40.0 && vis > 0.0){
+    float corridor = exp(-(ax*ax) / (hw*hw*5.0));
+    col -= lt * 0.8 * corridor * vis;          // take most of the frozen traffic out
+    float h1, h2, h3, h4;
+    float a1 = lane(P.y, ax - hw*0.55, 1.0, 190.0, 37.0, 1.0, 0.52, h1);
+    float a2 = lane(P.y, ax - hw*1.35, 1.0, 190.0, 31.0, 2.0, 0.30, h2);
+    float b1 = lane(P.y, ax + hw*0.55, -1.0, 190.0, 34.0, 3.0, 0.50, h3);
+    float b2 = lane(P.y, ax + hw*1.35, -1.0, 190.0, 41.0, 4.0, 0.28, h4);
+    float farBoost = mix(1.0, 1.3, smoothstep(1700.0, 1250.0, P.y));
+    add += (RED * (a1 + a2) * 1.25 + WHITE * (b1 + b2) * 1.05) * vis * farBoost;
+    // wet-looking glow on the roadway itself
+    add += (RED * 0.5 + WHITE * 0.35) * 0.05 * corridor * vis;
+  }
+  // ---- side streets: straight lines to the same vanishing point, partly hidden by roofs and trees ----
+  for(int i=0;i<3;i++){
+    float m = i==0 ? 0.57 : (i==1 ? -0.57 : 1.1);
+    float sx = P.x - (2675.0 + m * (P.y - YH));
+    float w = max(4.0, 0.010 * d);
+    if(abs(sx) < w * 4.0 + 30.0 && P.y > 1650.0){
+      float gaps = smoothstep(0.42, 0.62, vn(vec2(P.y / 55.0, float(i) * 9.0 + 2.0)));   // fixed occlusion pattern
+      float v2 = gaps * smoothstep(1650.0, 1760.0, P.y) * (1.0 - smoothstep(2900.0, 3150.0, P.y));
+      float h1, h2;
+      float a = lane(P.y, sx - w*0.5, 1.0, 150.0, 23.0, 10.0 + float(i), 0.30, h1);
+      float b = lane(P.y, sx + w*0.5, -1.0, 150.0, 19.0, 20.0 + float(i), 0.26, h2);
+      add += (RED * a + WHITE * b * 0.9) * 0.75 * v2;
+    }
+  }
+  // ---- distant freeway, far left: tiny sparkles drifting both ways ----
+  {
+    vec2 A = vec2(328.0, 1381.0), B = vec2(1141.0, 1254.0);
+    vec2 ab = B - A; float len = length(ab); vec2 dir = ab / len;
+    float along = dot(P - A, dir) / len, across = dot(P - A, vec2(-dir.y, dir.x));
+    if(along > -0.02 && along < 1.02 && abs(across) < 14.0){
+      float infl = max(1.0, uPx * 0.45);
+      float r = 2.6 * infl;
+      float e = smoothstep(-0.02, 0.05, along) * (1.0 - smoothstep(0.95, 1.02, along));
+      for(int j=0;j<2;j++){
+        float sgn = j==0 ? 1.0 : -1.0, N = 46.0;
+        float q = along * N - sgn * 11.0 * uT / uL;
+        float c = floor(q), id = mod(c, 11.0) + 300.0 + float(j) * 77.0;
+        float pos = c + 0.3 + 0.4 * h11(id);
+        float dd = (q - pos) * len / N;
+        float on = step(h11(id + 0.5), 0.55);
+        float b = on * exp(-(dd*dd)/(r*r*1.6)) * exp(-pow(across - sgn*2.5, 2.0)/(r*r));
+        add += (j==0 ? AMBER : WHITE) * b * 0.8 * e / mix(1.0, infl * infl, 0.6);
+      }
+    }
+  }
+  // ---- twinkle of the picture's own lights (not the avenue corridor, which carries the moving cars) ----
+  {
+    float ph = uT / uL;
+    float keep = 1.0 - exp(-(ax*ax) / (hw*hw*5.0)) * vis;
+    float far = 1.0 - smoothstep(1150.0, 2600.0, P.y);
+    float n1 = vn(P / 46.0), n2 = vn(P / 61.0 + 31.7), n3 = vn(P / 38.0 + 77.1), n4 = vn(P / 85.0 + 5.3);
+    float breathe = sin(TAU * (n1 * 2.0 + 2.0 * ph));
+    float drift   = sin(TAU * (n2 * 2.0 - 3.0 * ph));
+    float scint   = sin(TAU * (n3 * 3.0 + 11.0 * ph)) * sin(TAU * (n1 * 2.0 - 7.0 * ph));
+    float gain = 1.0 + 0.50 * breathe + 0.30 * drift + (0.28 + 0.50 * far) * scint;
+    // about a quarter of the lamps dim right down and come back, each at its own moment in the loop
+    float pick = smoothstep(0.56, 0.64, n4);
+    float sw = smoothstep(-0.25, 0.25, sin(TAU * (vn(P / 85.0 + 140.0) * 2.0 + ph)));
+    gain *= mix(1.0, mix(0.10, 1.25, sw), pick);
+    gain = max(gain, 0.0);
+    col += lt * (gain - 1.0) * 1.25 * keep;
+    // halo follows the lamp, so a brightening light also blooms a little
+    col += textureLod(uLights, uv, max(0.0, uLightsLod + 3.0)).rgb * 0.9 * max(gain - 0.6, 0.0) * keep;
+  }
+  col += add;
+  // soft bloom of the picture's own lights so the new ones sit in the same air
+  col += textureLod(uLights, uv, max(0.0, uLightsLod + 4.0)).rgb * 0.5;
+  outColor = vec4(max(col, 0.0), 1.0);
+}`
+});
+</script>
+</body></html>

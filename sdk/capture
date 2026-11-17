@@ -1,0 +1,205 @@
+#!/usr/bin/env node
+/* capture: render an animated web page frame by frame into a lossless video, as the source for
+ * `livescenes pack`.
+ *
+ * The page is opened in headless Chromium with its clock replaced: performance.now(), Date.now() and
+ * requestAnimationFrame only advance when this script says so. Every frame is drawn at exactly
+ * t = n / fps and screenshotted, so the result does not depend on how fast the machine renders, and a
+ * page whose animation is periodic in L seconds gives a perfect loop of L * fps frames
+ * (pack it with --fade 0).
+ *
+ * Needs Node 18+, ffmpeg on PATH (or $FFMPEG), and Playwright: `playwright` or `playwright-core`
+ * resolvable from here or through $NODE_PATH, with its Chromium installed, or pass --chromium.
+ */
+'use strict';
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const SIZES = { landscape: [2560, 1440], portrait: [1080, 2400] };
+const HELP = `usage: capture URL -o OUT.mkv --loop S [options]
+
+Render the page at URL frame by frame (frames t = 0 .. S - 1/fps) into a lossless video.
+
+  -o, --output FILE        video to write (.mkv)
+  --loop S                 seconds to capture: the page's loop length
+  --portrait               1080x2400 instead of the default 2560x1440 (landscape)
+  --size WxH               any other viewport size (device scale factor is always 1)
+  --fps N                  frames per second (default 30)
+  --start S                page time of the first frame (default 0)
+  --codec x264rgb|ffv1     lossless intermediate codec (default x264rgb: H.264 RGB, qp 0)
+  --gl swiftshader|gpu     WebGL backend: software (default, the same on every machine) or the GPU
+  --ready EXPR             JS expression that must be truthy before the first frame, besides the
+                           defaults (page loaded, network quiet, the page has asked for a frame)
+  --save-frames N,N,...    also write these frame numbers as PNG next to OUT (OUT-f00000.png), to look at
+  --chromium PATH          browser executable (default: Playwright's own Chromium)
+  --timeout S              how long to wait for the page to get ready (default 60)
+
+example (serve the repo first: python3 -m http.server 8720):
+  sdk/capture http://127.0.0.1:8720/scenes-src/embers/ --loop 32 -o build/capture/embers/landscape.mkv
+  sdk/capture http://127.0.0.1:8720/scenes-src/embers/ --loop 32 --portrait -o build/capture/embers/portrait.mkv
+  sdk/livescenes pack build/capture/embers/landscape.mkv --portrait build/capture/embers/portrait.mkv --fade 0 ...
+`;
+
+function fail(msg) { process.stderr.write(`capture: ${msg}\n`); process.exit(1); }
+
+function parseArgs(argv) {
+  const o = { fps: 30, start: 0, codec: 'x264rgb', gl: 'swiftshader', size: SIZES.landscape, timeout: 60, save: [] };
+  const need = (i, name) => { if (i >= argv.length) fail(`${name} needs a value`); return argv[i]; };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '-h' || a === '--help') { process.stdout.write(HELP); process.exit(0); }
+    else if (a === '-o' || a === '--output') o.out = need(++i, a);
+    else if (a === '--loop') o.loop = parseFloat(need(++i, a));
+    else if (a === '--fps') o.fps = parseInt(need(++i, a), 10);
+    else if (a === '--start') o.start = parseFloat(need(++i, a));
+    else if (a === '--portrait') o.size = SIZES.portrait;
+    else if (a === '--landscape') o.size = SIZES.landscape;
+    else if (a === '--size') {
+      const m = /^(\d+)x(\d+)$/.exec(need(++i, a)); if (!m) fail('--size wants WxH, e.g. 2560x1440');
+      o.size = [parseInt(m[1], 10), parseInt(m[2], 10)];
+    }
+    else if (a === '--codec') o.codec = need(++i, a);
+    else if (a === '--gl') o.gl = need(++i, a);
+    else if (a === '--ready') o.ready = need(++i, a);
+    else if (a === '--save-frames') o.save = need(++i, a).split(',').map(s => parseInt(s, 10));
+    else if (a === '--chromium') o.chromium = need(++i, a);
+    else if (a === '--timeout') o.timeout = parseFloat(need(++i, a));
+    else if (a.startsWith('-')) fail(`unknown option ${a} (see --help)`);
+    else if (!o.url) o.url = a;
+    else fail(`unexpected argument ${a}`);
+  }
+  if (!o.url || !o.out || !(o.loop > 0)) { process.stderr.write(HELP); process.exit(2); }
+  if (!(o.fps > 0)) fail('--fps must be a positive number');
+  if (!['x264rgb', 'ffv1'].includes(o.codec)) fail('--codec must be x264rgb or ffv1');
+  if (!['swiftshader', 'gpu'].includes(o.gl)) fail('--gl must be swiftshader or gpu');
+  if (o.size[0] % 2 || o.size[1] % 2) fail('width and height must be even');
+  o.frames = Math.round(o.loop * o.fps);
+  if (Math.abs(o.frames - o.loop * o.fps) > 1e-6) fail(`--loop ${o.loop} is not a whole number of frames at ${o.fps} fps`);
+  return o;
+}
+
+function loadPlaywright() {
+  for (const name of ['playwright', 'playwright-core']) {
+    try { return require(name); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
+  }
+  fail('Playwright not found. Install it (npm i playwright-core) or point $NODE_PATH at a node_modules that has it.');
+}
+
+// Runs in the page before any of its scripts: the page's clock stands still until __capture.frame(ms).
+function fakeClock() {
+  const realRAF = window.requestAnimationFrame.bind(window);
+  const epoch = Date.now();
+  let now = 0, nextId = 0;
+  const queue = new Map();
+  performance.now = () => now;
+  Date.now = () => epoch + now;
+  window.requestAnimationFrame = cb => { queue.set(++nextId, cb); return nextId; };
+  window.cancelAnimationFrame = id => { queue.delete(id); };
+  window.__capture = {
+    pending: () => queue.size,
+    // Set the time and run the page's frame callbacks inside a real animation frame, so what they draw
+    // is presented. Resolves to the number of callbacks that ran.
+    frame: ms => new Promise((resolve, reject) => realRAF(() => {
+      now = ms;
+      const cbs = [...queue.values()]; queue.clear();
+      try { for (const cb of cbs) cb(ms); } catch (e) { reject(e); return; }
+      resolve(cbs.length);
+    })),
+  };
+}
+
+function startEncoder(o) {
+  const codec = o.codec === 'ffv1'
+    ? ['-c:v', 'ffv1', '-level', '3', '-g', '1', '-slices', '16', '-slicecrc', '1', '-pix_fmt', 'bgr0']
+    : ['-c:v', 'libx264rgb', '-qp', '0', '-preset', 'veryfast', '-g', String(o.fps), '-pix_fmt', 'rgb24'];
+  const args = ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'image2pipe', '-framerate', String(o.fps),
+    '-c:v', 'png', '-i', '-', '-an', ...codec, '-r', String(o.fps), '-fps_mode', 'cfr', o.out];
+  const ff = spawn(process.env.FFMPEG || 'ffmpeg', args, { stdio: ['pipe', 'inherit', 'inherit'] });
+  const done = new Promise((resolve, reject) => {
+    ff.on('error', e => reject(new Error(`cannot run ffmpeg: ${e.message}`)));
+    ff.on('exit', code => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with ${code}`)));
+  });
+  ff.stdin.on('error', () => {});      // the exit handler reports it
+  return {
+    write: buf => new Promise(resolve => { if (ff.stdin.write(buf)) resolve(); else ff.stdin.once('drain', resolve); }),
+    finish: () => { ff.stdin.end(); return done; },
+    kill: () => ff.kill(),
+  };
+}
+
+async function main() {
+  const o = parseArgs(process.argv.slice(2));
+  const [W, H] = o.size;
+  const { chromium } = loadPlaywright();
+  fs.mkdirSync(path.dirname(path.resolve(o.out)), { recursive: true });
+
+  const gl = o.gl === 'gpu'
+    ? ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=default']
+    : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
+  const browser = await chromium.launch({
+    headless: true, executablePath: o.chromium,
+    args: [...gl, '--hide-scrollbars', '--force-color-profile=srgb', '--disable-lcd-text',
+      '--disable-background-timer-throttling', '--disable-renderer-backgrounding'],
+  });
+  let enc = null;
+  try {
+    const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+    await context.addInitScript(fakeClock);
+    const page = await context.newPage();
+    const problems = [];
+    page.on('pageerror', e => problems.push(`page error: ${e.message}`));
+    page.on('console', m => { if (m.type() === 'error') problems.push(`console error: ${m.text()}`); });
+    page.on('requestfailed', r => problems.push(`request failed: ${r.url()}`));
+
+    await page.goto(o.url, { waitUntil: 'load', timeout: o.timeout * 1000 });
+    await page.waitForLoadState('networkidle', { timeout: o.timeout * 1000 });
+    // Ready = the page has asked for an animation frame (it has its textures and has started), and --ready.
+    const deadline = Date.now() + o.timeout * 1000;
+    const readyExpr = `window.__capture.pending() > 0 && !!(${o.ready || 'true'})`;
+    while (!(await page.evaluate(readyExpr))) {
+      if (problems.length) throw new Error(problems.join('\n'));
+      if (Date.now() > deadline) throw new Error(`the page never got ready (no requestAnimationFrame${o.ready ? ', or --ready stayed false' : ''})`);
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (problems.length) throw new Error(problems.join('\n'));
+
+    const cdp = await context.newCDPSession(page);
+    const shot = async () => Buffer.from((await cdp.send('Page.captureScreenshot',
+      { format: 'png', optimizeForSpeed: true, captureBeyondViewport: false })).data, 'base64');
+    // Draw frame 0 twice and throw the first away: warms up shaders, textures and the compositor, so
+    // nothing is blank or half loaded at the start.
+    await page.evaluate(ms => window.__capture.frame(ms), o.start * 1000);
+    await shot();
+
+    enc = startEncoder(o);
+    const base = o.out.replace(/\.[^./]+$/, '');
+    const t0 = Date.now();
+    let idle = 0;
+    for (let n = 0; n < o.frames; n++) {
+      const ran = await page.evaluate(ms => window.__capture.frame(ms), (o.start + n / o.fps) * 1000);
+      if (!ran) idle++;
+      const png = await shot();
+      if (png.readUInt32BE(16) !== W || png.readUInt32BE(20) !== H)
+        throw new Error(`frame ${n} is ${png.readUInt32BE(16)}x${png.readUInt32BE(20)}, expected ${W}x${H}`);
+      if (o.save.includes(n)) fs.writeFileSync(`${base}-f${String(n).padStart(5, '0')}.png`, png);
+      await enc.write(png);
+      if (problems.length) throw new Error(problems.join('\n'));
+      if (process.stderr.isTTY && (n % 10 === 9 || n === o.frames - 1)) {
+        const el = (Date.now() - t0) / 1000;
+        process.stderr.write(`\r${path.basename(o.out)}: frame ${n + 1}/${o.frames}  ${(el / (n + 1) * (o.frames - n - 1)).toFixed(0)} s left   `);
+      }
+    }
+    if (process.stderr.isTTY) process.stderr.write('\n');
+    await enc.finish(); enc = null;
+    if (idle) process.stderr.write(`capture: warning: the page drew nothing new in ${idle} of ${o.frames} frames (no requestAnimationFrame callback)\n`);
+    const mb = fs.statSync(o.out).size / 1e6;
+    process.stderr.write(`capture: ${o.out}: ${o.frames} frames, ${W}x${H}, ${o.fps} fps, ${o.loop} s, ${mb.toFixed(0)} MB, ` +
+      `${((Date.now() - t0) / 1000).toFixed(0)} s\n`);
+  } finally {
+    if (enc) enc.kill();
+    await browser.close();
+  }
+}
+
+main().catch(e => fail(e.message));
