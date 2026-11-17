@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Night Wind</title></head>
+<body>
+<script src="common.js"></script>
+<script>
+// Night Wind. The cape billows in travelling waves, the hat tip and the ornament sway,
+// and white ink flecks stream past behind the witch.
+Concept.run({
+  L: 16,
+  landscape: { focus: [1500, 844] },
+  portrait: { focus: [2030, 844] },             // slice on the witch: hat, face, staff, cape
+  textures: { uM2: 'masks2.png' },
+  frag: `
+uniform sampler2D uM2;
+const vec2 WIND = vec2(0.958, -0.287);
+vec2 rot(vec2 v, float a){ float c = cos(a), s = sin(a); return vec2(c*v.x - s*v.y, s*v.x + c*v.y); }
+float flecks(vec2 p, float laneH, float cellL, float seed){
+  float u = dot(p, WIND), v = dot(p, vec2(-WIND.y, WIND.x));
+  float j = floor(v/laneH);
+  float k = 1.0 + floor(hash1(vec2(j, seed))*3.0);           // cells travelled per loop: 1..3
+  float uu = u - k*cellL*uT/uL + hash1(vec2(j, seed+3.0))*cellL;
+  float i = floor(uu/cellL);
+  vec2 h = hash2(vec2(mod(i, k) + 7.0*seed, j));
+  if (h.x > 0.42) return 0.0;
+  float r = mix(1.3, 3.0, h.y*h.y);                          // half thickness
+  float hl = r*mix(5.0, 16.0, hash1(h + seed));              // half length: short fleck .. long wind stroke
+  float lu = uu - (i + 0.5)*cellL - (hash1(vec2(j, mod(i, k)) + seed) - 0.5)*cellL*0.6;
+  float lv = v - (j + 0.5)*laneH - 0.22*laneH*sin(TAU*(uu/cellL) + h.y*9.0);
+  float x = clamp(lu/hl, -1.0, 1.0);
+  float d = abs(lv) - r*(1.0 - x*x) + step(hl, abs(lu))*9.0;  // brush stroke tapering to both ends
+  return 1.0 - smoothstep(-0.6*uPx, 0.6*uPx, d);
+}
+vec3 scene(vec2 p){
+  vec2 q = p;
+  // cape: two travelling waves, displacement across the wind, weight from the cape mask
+  float kw = texture(uM2, p/SRC).g;
+  float a = dot(p, vec2(0.93, 0.36));
+  float wv = 10.0*sin(TAU*(a/300.0 - 3.0*uT/uL)) + 4.5*sin(TAU*(a/170.0 - 5.0*uT/uL) + 1.3)
+           + 3.0*sin(TAU*(dot(p, vec2(0.6,-0.8))/210.0 - 2.0*uT/uL) + 0.7);
+  q -= kw*wv*vec2(-0.30, 0.95);
+  // hat tip: small swing about where the tip folds
+  float tw = smoothstep(1985.0, 2070.0, p.x)*(1.0 - smoothstep(292.0, 322.0, p.y))*(1.0 - smoothstep(105.0, 150.0, length(p - vec2(2075.0, 232.0))));
+  float ta = 0.055*sin(TAU*2.0*uT/uL) + 0.030*sin(TAU*5.0*uT/uL + 1.0);
+  q = mix(q, vec2(1992.0, 262.0) + rot(q - vec2(1992.0, 262.0), -ta), tw);
+  // ornament dangling from the hat
+  float ow = 1.0 - smoothstep(34.0, 58.0, length(p - vec2(1712.0, 322.0)));
+  float oa = 0.10*sin(TAU*3.0*uT/uL + 0.5) + 0.04*sin(TAU*7.0*uT/uL);
+  q = mix(q, vec2(1758.0, 360.0) + rot(q - vec2(1758.0, 360.0), -oa), ow);
+  float c = img(q);
+  // flecks ride behind the figure and keep off the moon
+  float fig = texture(uM2, p/SRC).r;
+  float f = max(flecks(p, 58.0, 760.0, 1.0), flecks(p + 31.0, 97.0, 1100.0, 2.0));
+  f *= (1.0 - fig)*smoothstep(125.0, 150.0, length(p - MOON));
+  return vec3(max(c, f));
+}`
+});
+</script>
+</body></html>
