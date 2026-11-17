@@ -438,8 +438,8 @@ def cmd_pack(a):
 
     scene = {"format": FORMAT_VERSION, "id": a.id, "title": a.title}
     for k in ("author", "license", "description"):
-        if getattr(a, k):
-            scene[k] = getattr(a, k)
+        if getattr(a, k) or prev.get(k):            # re-packing: keep what the pack had
+            scene[k] = getattr(a, k) or prev[k]
     scene["loop"] = round(L / FPS, 3)
     scene["videos"] = {}
     for orient, foc in videos.items():

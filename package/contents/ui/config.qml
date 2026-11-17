@@ -341,27 +341,36 @@ ColumnLayout {
             return;
         helper.run(["progress", job.id], out => {
             const r = Store.parseJson(out);
-            if (page.levelJob !== job || !r)
-                return;
+            if (page.levelJob !== job || !r || job.saving)
+                return;                              // another reply already started the save
             if (r.state === "error" || r.state === "none") {
                 helper.run(["discard", job.id]);
                 page.levelFailed(r.message || "the download was removed");
             } else if (r.state === "done") {
                 job.saving = true;
-                const file = job.kind + "-" + job.level + ".mp4";
-                const scene = JSON.parse(JSON.stringify(job.scene));
-                scene.level = job.level;
-                scene.videos = {};
-                scene.videos[job.kind] = page.savedEntry(job.video, file);
-                helper.run(["save", job.id, JSON.stringify(scene, null, 2), file], res => {
-                    const s = Store.parseJson(res);
-                    if (!s || !s.ok) {
+                helper.run(["state"], out => {
+                    // the look's last profile was deleted while it downloaded: drop the download
+                    const st = Store.parseState(out);
+                    if (!st.ok || !st.looks[job.id] || Store.profilesUsing(st, job.id).length === 0) {
                         helper.run(["discard", job.id]);
-                        page.levelFailed(s && s.error ? s.error : res);
+                        page.levelJob = null;
                         return;
                     }
-                    page.levelJob = null;
-                    page.editProfiles(raw => {});    // rewriting profiles.json makes the wallpapers re-read the looks
+                    const file = job.kind + "-" + job.level + ".mp4";
+                    const scene = JSON.parse(JSON.stringify(job.scene));
+                    scene.level = job.level;
+                    scene.videos = {};
+                    scene.videos[job.kind] = page.savedEntry(job.video, file);
+                    helper.run(["save", job.id, JSON.stringify(scene, null, 2), file], res => {
+                        const s = Store.parseJson(res);
+                        if (!s || !s.ok) {
+                            helper.run(["discard", job.id]);
+                            page.levelFailed(s && s.error ? s.error : res);
+                            return;
+                        }
+                        page.levelJob = null;
+                        page.editProfiles(raw => {});    // rewriting profiles.json makes the wallpapers re-read the looks
+                    });
                 });
             } else if (r.bytes !== job.bytes) {
                 page.levelJob = Object.assign({}, job, { bytes: r.bytes });

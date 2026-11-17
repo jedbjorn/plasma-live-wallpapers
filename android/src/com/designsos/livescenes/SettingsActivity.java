@@ -407,7 +407,7 @@ public class SettingsActivity extends Activity {
                     levelStatus = "Downloading " + level + ": " + Ui.size(this, done) + " of " + Ui.size(this, at.bytes) + "…";
                     if (levelNote != null) levelNote.setText(levelStatus);
                 }), () -> gone);
-                store.install(at.json, at.orientation, file, null, false);
+                store.installLevel(at.json, at.orientation, file);   // dropped if the look was deleted meanwhile
             } catch (IOException x) {
                 error = x.getMessage();
             } finally {

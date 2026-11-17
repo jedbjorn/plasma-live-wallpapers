@@ -501,6 +501,13 @@ final class Store {
         return result;
     }
 
+    /** Installs a level's video for a saved look; false, and nothing changes, if no profile uses the look any more. */
+    synchronized boolean installLevel(JSONObject scene, String orientation, File video) throws IOException {
+        if (profilesFor(scene.optString("id")).isEmpty()) return false;   // deleted while it downloaded
+        install(scene, orientation, video, null, false);
+        return true;
+    }
+
     /**
      * Imports the packs the SDK pushed to the external files dir's import/&lt;id&gt;/ (FORMAT.md), then removes them.
      * Returns a line per pack for the user.
