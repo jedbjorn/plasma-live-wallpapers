@@ -1,5 +1,6 @@
 package com.designsos.livescenes;
 
+import android.graphics.Bitmap;
 import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
 import android.opengl.EGLConfig;
@@ -9,6 +10,7 @@ import android.opengl.EGLExt;
 import android.opengl.EGLSurface;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
+import android.opengl.GLUtils;
 import android.os.Handler;
 import android.view.Surface;
 
@@ -20,6 +22,7 @@ import java.nio.FloatBuffer;
  * Draws decoded frames (a SurfaceTexture) to a window as an aspect-fill crop around a focus point:
  * one textured quad per decoded frame, nothing in between. Used only when the video's aspect ratio
  * differs from the surface's (e.g. a landscape-only look on a phone); lives on the video thread.
+ * Also draws the low-battery still ({@link #drawStill}).
  */
 final class GlCrop implements SurfaceTexture.OnFrameAvailableListener {
     static final String VS =
@@ -38,6 +41,13 @@ final class GlCrop implements SurfaceTexture.OnFrameAvailableListener {
           + "uniform samplerExternalOES uTex;\n"
           + "varying vec2 vTc;\n"
           + "void main() { gl_FragColor = texture2D(uTex, vTc); }\n";
+    static final String FS_2D =
+            "precision mediump float;\n"
+          + "uniform sampler2D uTex;\n"
+          + "varying vec2 vTc;\n"
+          + "void main() { gl_FragColor = texture2D(uTex, vTc); }\n";
+    /** Bitmap rows run top-down, texture v bottom-up: flip v. */
+    static final float[] FLIP_V = {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1};
 
     final EGLDisplay dpy;
     final EGLContext ctx;
@@ -54,15 +64,10 @@ final class GlCrop implements SurfaceTexture.OnFrameAvailableListener {
         dpy = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
         int[] v = new int[2];
         if (!EGL14.eglInitialize(dpy, v, 0, v, 1)) throw new IllegalStateException("eglInitialize");
-        int[] attrs = {EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8,
-                EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
-                EGL14.EGL_NONE};
-        EGLConfig[] cfg = new EGLConfig[1];
-        int[] n = new int[1];
-        if (!EGL14.eglChooseConfig(dpy, attrs, 0, cfg, 0, 1, n, 0) || n[0] < 1) throw new IllegalStateException("no EGL config");
-        ctx = EGL14.eglCreateContext(dpy, cfg[0], EGL14.EGL_NO_CONTEXT,
+        EGLConfig cfg = config(dpy);
+        ctx = EGL14.eglCreateContext(dpy, cfg, EGL14.EGL_NO_CONTEXT,
                 new int[]{EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE}, 0);
-        win = EGL14.eglCreateWindowSurface(dpy, cfg[0], window, new int[]{EGL14.EGL_NONE}, 0);
+        win = EGL14.eglCreateWindowSurface(dpy, cfg, window, new int[]{EGL14.EGL_NONE}, 0);
         if (ctx == EGL14.EGL_NO_CONTEXT || win == EGL14.EGL_NO_SURFACE) throw new IllegalStateException("EGL setup failed");
         EGL14.eglMakeCurrent(dpy, win, win, ctx);
 
@@ -97,6 +102,61 @@ final class GlCrop implements SurfaceTexture.OnFrameAvailableListener {
         st = new SurfaceTexture(tex);
         st.setOnFrameAvailableListener(this, h);
         input = new Surface(st);
+    }
+
+    static EGLConfig config(EGLDisplay dpy) {
+        int[] attrs = {EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8,
+                EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+                EGL14.EGL_NONE};
+        EGLConfig[] cfg = new EGLConfig[1];
+        int[] n = new int[1];
+        if (!EGL14.eglChooseConfig(dpy, attrs, 0, cfg, 0, 1, n, 0) || n[0] < 1) throw new IllegalStateException("no EGL config");
+        return cfg[0];
+    }
+
+    /**
+     * Draws a bitmap to the window once, cropped like the video ({@link #crop}), then lets go of the window
+     * entirely so a decoder can use it later (a Canvas would stay attached to it). Runs on the calling thread.
+     */
+    static void drawStill(Surface window, Bitmap b, float[] crop) {
+        EGLDisplay dpy = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
+        int[] v = new int[2];
+        if (!EGL14.eglInitialize(dpy, v, 0, v, 1)) throw new IllegalStateException("eglInitialize");
+        EGLConfig cfg = config(dpy);
+        EGLContext ctx = EGL14.eglCreateContext(dpy, cfg, EGL14.EGL_NO_CONTEXT,
+                new int[]{EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE}, 0);
+        EGLSurface win = EGL14.eglCreateWindowSurface(dpy, cfg, window, new int[]{EGL14.EGL_NONE}, 0);
+        try {
+            if (ctx == EGL14.EGL_NO_CONTEXT || win == EGL14.EGL_NO_SURFACE
+                    || !EGL14.eglMakeCurrent(dpy, win, win, ctx)) throw new IllegalStateException("EGL setup failed");
+            int prog = GLES20.glCreateProgram();
+            GLES20.glAttachShader(prog, shader(GLES20.GL_VERTEX_SHADER, VS));
+            GLES20.glAttachShader(prog, shader(GLES20.GL_FRAGMENT_SHADER, FS_2D));
+            GLES20.glLinkProgram(prog);
+            GLES20.glUseProgram(prog);
+            int[] t = new int[1];
+            GLES20.glGenTextures(1, t, 0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, t[0]);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, b, 0);
+            FloatBuffer quad = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+            quad.put(new float[]{-1, -1, 1, -1, -1, 1, 1, 1}).position(0);
+            int aPos = GLES20.glGetAttribLocation(prog, "aPos");
+            GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad);
+            GLES20.glEnableVertexAttribArray(aPos);
+            GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(prog, "uSt"), 1, false, FLIP_V, 0);
+            GLES20.glUniform4fv(GLES20.glGetUniformLocation(prog, "uCrop"), 1, crop, 0);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+            if (!EGL14.eglSwapBuffers(dpy, win)) throw new IllegalStateException("eglSwapBuffers 0x" + Integer.toHexString(EGL14.eglGetError()));
+        } finally {
+            EGL14.eglMakeCurrent(dpy, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
+            if (win != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(dpy, win);   // disconnects from the window
+            if (ctx != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(dpy, ctx);
+            EGL14.eglReleaseThread();
+        }
     }
 
     /**

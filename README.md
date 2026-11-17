@@ -124,6 +124,8 @@ To update, run `git pull && ./android/build.sh --install`. To uninstall, choose 
 
 The wallpaper decodes the video with the phone's hardware decoder straight onto the wallpaper surface; it doesn't use the GPU unless a look needs an off-centre crop of the other orientation. Measured with the Pixel 6's on-device power meters, the Hall look on the home screen costs about **3 mAh per hour** over a hidden wallpaper, against about 114 mAh per hour for the earlier version that rendered the scene live. It uses nothing while hidden.
 
+**Low battery:** below a battery level you choose in the app (Battery > Still frame below: Off, 20%, 30% or 50%; 50% by default), the wallpaper shows a still image of the look and shuts the video player down completely: no decoder, no thread, no GPU work after the one frame is drawn. It plays again while charging, or once the battery is back at or above that level.
+
 ### Keeping the phone awake while developing
 
 - Plugged in: Developer options > Stay awake, or `adb shell svc power stayon true` (`false` to undo).
@@ -133,7 +135,7 @@ In both cases the power button still turns the screen off.
 
 ### Tested on Android
 
-Tested on a Pixel 6 with Android 17: playback and seamless looping, speed presets, live profile switching, the catalog, preview download with sha256 check, save and discard, and import from the SDK. Pausing with an app in front was measured at 0% CPU. Pausing with the screen off and playback on the lock screen use the same code path but have not been checked separately with the video version. Other devices have not been tested.
+Tested on a Pixel 6 with Android 17: playback and seamless looping, speed presets, live profile switching, the catalog, preview download with sha256 check, save and discard, import from the SDK, and the low-battery still (switching between still and playing on battery level and charger, simulated with `adb shell dumpsys battery`). Pausing with an app in front was measured at 0% CPU. Pausing with the screen off and playback on the lock screen use the same code path but have not been checked separately with the video version. Other devices have not been tested.
 
 ## macOS
 
