@@ -40,6 +40,7 @@ final class Store {
     static final String TAG = LiveWallpaperService.TAG;
     static final String DEFAULT_ASSETS = "default";   // the bundled look, never copied to storage
     static final float[] SPEEDS = {0.5f, 1f, 2f};
+    static final String[] LEVELS = {"weak", "medium", "strong"};
 
     static final class Profile {
         String id, name, look;
@@ -258,6 +259,27 @@ final class Store {
         return e != null ? e.optString("sha256", "") : "";
     }
 
+    /** The level a scene's videos are (its "level", else its default), or null for a look without levels. */
+    static String level(JSONObject scene) {
+        JSONObject l = scene != null ? scene.optJSONObject("levels") : null;
+        return l == null ? null : scene.optString("level", l.optString("default", "strong"));
+    }
+
+    /** A copy of the scene whose videos are a level's, with "level" set (FORMAT.md "Levels"); without levels, the scene. */
+    static JSONObject atLevel(JSONObject scene, String level) {
+        JSONObject l = scene.optJSONObject("levels");
+        JSONObject vs = l != null && l.optJSONObject("videos") != null ? l.optJSONObject("videos").optJSONObject(level) : null;
+        if (vs == null) return scene;
+        try {
+            JSONObject s = new JSONObject(scene.toString());
+            s.put("videos", new JSONObject(vs.toString()));
+            s.put("level", level);
+            return s;
+        } catch (JSONException e) {
+            return scene;
+        }
+    }
+
     /** The catalog has a different video than the saved one (both sha256s known, for the same orientation). */
     static boolean isNewer(String savedSha, String catalogSha) {
         return savedSha != null && catalogSha != null && !savedSha.isEmpty() && !catalogSha.isEmpty()
@@ -266,28 +288,34 @@ final class Store {
 
     /**
      * Gives saved looks the theme of their catalog entry (looks saved before themes existed, or whose theme changed
-     * since), in their scene.json; the video stays. The playing wallpaper picks it up. Returns the looks updated.
+     * since), and its levels if the saved video is the catalog's default level (a look that got levels since), in
+     * their scene.json; the video stays. The playing wallpaper picks it up. Returns the looks updated.
      */
     List<String> syncThemes(List<Catalog.Entry> catalog) {
         List<String> done = new ArrayList<>();
         for (Catalog.Entry e : catalog) {
-            JSONObject t = e.json.optJSONObject("theme");
-            if (t == null || Theme.of(e.json) == null) continue;
+            JSONObject t = Theme.of(e.json) != null ? e.json.optJSONObject("theme") : null;
+            JSONObject lv = e.json.optJSONObject("levels");
             synchronized (this) {
                 JSONObject s = scene(e.id);
-                JSONObject old = s != null ? s.optJSONObject("theme") : null;
-                if (s == null || (old != null && old.toString().equals(t.toString()))) continue;
+                if (s == null) continue;
+                JSONObject old = s.optJSONObject("theme");
+                boolean theme = t != null && (old == null || !old.toString().equals(t.toString()));
+                boolean levels = lv != null && !s.has("levels") && !e.sha256.isEmpty()
+                        && e.sha256.equalsIgnoreCase(videoSha(s, e.orientation));
+                if (!theme && !levels) continue;
                 try {
-                    s.put("theme", t);
+                    if (theme) s.put("theme", t);
+                    if (levels) s.put("levels", lv).put("level", level(e.json));
                     writeText(new File(lookDir(e.id), "scene.json"), s.toString(2));
                     done.add(e.id);
                 } catch (IOException | JSONException x) {
-                    Log.w(TAG, "can't update the theme of " + e.id + ": " + x.getMessage());
+                    Log.w(TAG, "can't update " + e.id + " from the catalog: " + x.getMessage());
                 }
             }
         }
         if (!done.isEmpty()) {
-            Log.i(TAG, "themes from the catalog for " + done);
+            Log.i(TAG, "themes or levels from the catalog for " + done);
             changed();
         }
         return done;
@@ -417,14 +445,18 @@ final class Store {
     // ---- saving a look (from a preview or an import)
 
     /**
-     * Installs a look: scene.json, the one video file (moved), the poster (moved, if any), replacing an older copy
-     * (for every profile that plays it). If a profile already plays the look, that one is returned, never a second
-     * one: with {@code activate} it becomes the active one, unless the active profile already plays this look.
-     * Otherwise a profile is made for it, and it becomes the active one.
+     * Installs a look: scene.json, the one video file (moved), the poster (moved, if any; else the saved one stays),
+     * replacing an older copy (for every profile that plays it). The scene's videos are those of its "level" if it
+     * has levels (the default level if it names none). If a profile already plays the look, that one is returned,
+     * never a second one: with {@code activate} it becomes the active one, unless the active profile already plays
+     * this look. Otherwise a profile is made for it, and it becomes the active one.
      */
     Profile install(JSONObject scene, String orientation, File video, File poster, boolean activate) throws IOException {
         String id = scene.optString("id");
         if (!id.matches("[a-z0-9-]+")) throw new IOException("bad look id: " + id);
+        String level = level(scene);
+        // a level has its own file name, so a level change is a new file to the players
+        String name = orientation + (level != null ? "-" + level : "") + ".mp4";
         File tmp = new File(looksDir, "." + id + ".new");
         deleteTree(tmp);
         if (!tmp.mkdirs()) throw new IOException("can't create " + tmp);
@@ -434,20 +466,23 @@ final class Store {
             JSONObject e = scene.getJSONObject("videos").getJSONObject(orientation);
             JSONObject entry = new JSONObject(e.toString());
             entry.remove("url");
-            entry.put("file", orientation + ".mp4");
+            entry.put("file", name);
             s.put("videos", new JSONObject().put(orientation, entry));
+            if (level != null) s.put("level", level);
             s.remove("poster");
             if (!s.has("format")) s.put("format", 1);
             writeText(new File(tmp, "scene.json"), s.toString(2));
         } catch (JSONException e) {
             throw new IOException("bad scene: " + e.getMessage(), e);
         }
-        move(video, new File(tmp, orientation + ".mp4"));
+        move(video, new File(tmp, name));
         if (poster != null && poster.isFile()) move(poster, new File(tmp, "poster.jpg"));
 
         Profile result;
         synchronized (this) {
             File dir = lookDir(id), old = new File(looksDir, "." + id + ".old");
+            File kept = new File(dir, "poster.jpg");
+            if (!new File(tmp, "poster.jpg").exists() && kept.isFile()) move(kept, new File(tmp, "poster.jpg"));
             deleteTree(old);
             if (dir.exists() && !dir.renameTo(old)) throw new IOException("can't replace " + dir);
             if (!tmp.renameTo(dir)) throw new IOException("can't install " + dir);
