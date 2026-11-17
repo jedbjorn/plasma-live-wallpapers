@@ -109,7 +109,7 @@ final class Theme {
             String next = o.toString();
             if (next.equals(json(cur).toString())) return;
             Settings.Secure.putString(r, SETTING, next);
-            prefs.p.edit().putString(Prefs.THEME_WRITTEN, next).apply();
+            prefs.p.edit().putString(Prefs.THEME_WRITTEN, next).commit();   // on disk now: restore() needs it after a process death
             Log.i(TAG, "theme applied at once: " + next);
         } catch (SecurityException e) {
             Log.w(TAG, "can't write the theme setting: " + e.getMessage());
