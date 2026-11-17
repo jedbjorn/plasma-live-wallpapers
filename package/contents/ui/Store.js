@@ -6,7 +6,7 @@ var DEFAULT_CATALOG = "https://github.com/jedbjorn/plasma-live-wallpapers/releas
 var SPEEDS = [0.5, 1.0, 2.0];
 // The version of this code. plasmashell keeps it loaded after an upgrade, so it can differ from the
 // installed metadata.json until the shell restarts. release.sh checks it against the VERSION file.
-var VERSION = "2.1.0";
+var VERSION = "2.2.0";
 
 function validId(id) {
     return typeof id === "string" && /^[a-z0-9-]{1,64}$/.test(id) && id[0] !== "-";

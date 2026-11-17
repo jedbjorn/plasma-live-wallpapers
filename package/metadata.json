@@ -6,7 +6,7 @@
         "Description": "Looping video wallpapers: browse the Live Scenes catalog, preview looks and save them as profiles",
         "Icon": "weather-clear-night",
         "License": "MIT",
-        "Version": "2.1.0",
+        "Version": "2.2.0",
         "Website": "https://github.com/jedbjorn/plasma-live-wallpapers"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
