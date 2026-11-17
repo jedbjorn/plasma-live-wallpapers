@@ -69,11 +69,15 @@ Saved looks and `profiles.json` are in `~/.local/share/live-scenes/`, previews i
 
 ### Update and uninstall
 
+The wallpaper's settings page looks for a newer release when you open it (at most once a day; "Check for updates" under Advanced asks right away). When there is one, **Update** downloads the plugin (about 20 KB), checks it and upgrades the installed package; your profiles, saved looks and the built-in look are kept. plasmashell keeps the old version loaded until it restarts, and the page says so: log out and back in, or run `systemctl --user restart plasma-plasmashell.service` when it suits you. Live Scenes never restarts the shell itself.
+
+From a checkout:
+
 ```
 git pull && ./install.sh --restart
 ```
 
-plasmashell keeps the old files loaded until it restarts; `--restart` does that with `systemctl --user restart plasma-plasmashell.service`. Without it, the script never touches the shell.
+`--restart` restarts plasmashell with the command above. Without it, the script never touches the shell.
 
 `./uninstall.sh` removes the wallpaper and the preview cache, and tells you where your saved looks are. Pick another wallpaper type first if Live Scenes is in use.
 
@@ -114,11 +118,13 @@ Connect the phone with USB debugging, or pair it once for wireless debugging (Se
 ./android/build.sh --run
 ```
 
-This builds `android/build/LiveScenes.apk` (signed with the standard debug key, created in `~/.android/debug.keystore` if missing), installs it, and opens the live wallpaper preview: tap Set wallpaper and choose Home screen and lock screen (one player serves both). `--install` installs without opening the preview.
+This builds `android/build/LiveScenes.apk` (version from the `VERSION` file; signed with the standard debug key, created in `~/.android/debug.keystore` if missing, or with a release key, see [Releasing](#releasing)), installs it, and opens the live wallpaper preview: tap Set wallpaper and choose Home screen and lock screen (one player serves both). `--install` installs without opening the preview.
 
 In the Live Scenes app: browse the catalog, preview a look, save it as a profile, pick the active profile and its speed, and see how much storage your looks use. The wallpaper switches at once.
 
-To update, run `git pull && ./android/build.sh --install`. To uninstall, choose another wallpaper, then uninstall Live Scenes like any other app. Saved looks are excluded from Android backups.
+The app looks for a newer release when you open it (at most once a day; "Check for updates" under Advanced asks right away). **Update** downloads the release's APK, checks it and hands it to Android's installer, which asks you to confirm (the first time, also to allow Live Scenes to install apps). Profiles and saved looks are kept, and the wallpaper carries on with the new version. Android only installs an update signed with the same key as the app you have: a copy you built yourself can't be updated to the released one in place, and the app tells you so.
+
+From a checkout, run `git pull && ./android/build.sh --install`. To uninstall, choose another wallpaper, then uninstall Live Scenes like any other app. Saved looks are excluded from Android backups.
 
 ### Efficiency
 
@@ -181,6 +187,26 @@ sdk/livescenes catalog packs/* -o release/     # assets + catalog.json to host y
 ```sh
 ln -s "$PWD/skills/live-scene" ~/.claude/skills/live-scene
 ```
+
+## Releasing
+
+The apps read the catalog and their own updates from the latest GitHub release, so every release carries both.
+
+1. Set the new version in `VERSION`, and the same in `package/metadata.json` (`Version`) and `package/contents/ui/Store.js` (`VERSION`); `release.sh` refuses to run if they differ.
+2. Build the update files: `./release.sh` writes `live-scenes-plasma-<version>.tar.gz`, `LiveScenes-<version>.apk` and `update.json` (described in [`sdk/FORMAT.md`](sdk/FORMAT.md)) into `build/release/`. `--no-android` leaves the APK out; phones are then not offered that release.
+3. Add the catalog to the same folder: `sdk/livescenes catalog build/packs/* -o build/release`.
+4. Publish: `gh release create v<version> build/release/*`.
+
+**The Android signing key.** Android refuses an update that isn't signed with the same key as the installed app. Make one release key, once, and keep the keystore and its password somewhere safe and backed up; if it is lost, nobody can update in place any more:
+
+```sh
+keytool -genkeypair -keystore ~/live-scenes-release.p12 -storetype PKCS12 -alias livescenes -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Live Scenes"
+LIVESCENES_KEYSTORE=~/live-scenes-release.p12 ./release.sh
+```
+
+Without `LIVESCENES_KEYSTORE` the APK is signed with the build machine's debug key (`~/.android/debug.keystore`), which is fine for your own phone but ties releases to that one file. `android/build.sh` prints the SHA-256 of the key it signed with.
+
+To try an update without publishing one: serve a folder made by `release.sh` (`python3 -m http.server`), then start the Plasma settings with `LIVESCENES_UPDATE_URL=http://127.0.0.1:8000/update.json` in the environment, or, for a debuggable Android build (`LIVESCENES_DEBUG=1 ./android/build.sh --install`), `adb reverse tcp:8000 tcp:8000` and `adb shell am start -n com.designsos.livescenes/.SettingsActivity --es updateUrl http://127.0.0.1:8000/update.json`. Builds made without `LIVESCENES_DEBUG` ignore that option.
 
 ## License
 

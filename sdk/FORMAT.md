@@ -88,6 +88,38 @@ Every app must let the catalog URL be overridden (for testing and for third-part
 URLs may be relative; they resolve against the catalog's own URL. Release assets are flat:
 `<id>-landscape.mp4`, `<id>-portrait.mp4`, `<id>-poster.jpg`, plus `catalog.json`.
 
+## App updates
+
+The apps update themselves from the same release as the catalog. `update.json`, next to `catalog.json`
+(`…/releases/latest/download/update.json`), says which version the release holds and where each
+platform's app is:
+
+```json
+{
+  "format": 1,
+  "version": "2.1.0",
+  "notes": "https://github.com/jedbjorn/plasma-live-wallpapers/releases/tag/v2.1.0",
+  "plasma":  { "url": "live-scenes-plasma-2.1.0.tar.gz", "bytes": 19875, "sha256": "…" },
+  "android": { "versionCode": 20100, "url": "LiveScenes-2.1.0.apk", "bytes": 4854697, "sha256": "…" }
+}
+```
+
+- `version` is `<major>.<minor>.<patch>`, the content of the `VERSION` file the release was built from.
+  Versions compare number by number (2.10.0 is newer than 2.9.1). Android compares `versionCode`
+  instead (`major * 10000 + minor * 100 + patch`), which is what the system installer goes by.
+- A platform's key is missing when the release has nothing for it; its app then offers no update.
+  `notes` (optional, https) is opened in the browser by "What's new".
+- URLs may be relative, like the catalog's. Apps accept https only, and verify `sha256` before installing.
+- `plasma` is a `.tar.gz` holding the wallpaper package as `package/` (`metadata.json`, `contents/`),
+  without a look: the update keeps the installed one. It is installed with `kpackagetool6 --upgrade`;
+  plasmashell keeps the old version loaded until it restarts, and the app says so.
+- `android` is the APK. Android only installs it over an app signed with the same key, and asks the user.
+- The check: when the settings are opened, at most once a day, plus a "Check for updates" button. The
+  wallpaper itself never checks. Offline, or a release without `update.json`, means "no update" without
+  an error (unless the user pressed the button). Nothing is sent but the request for `update.json`.
+
+`release.sh` builds the two apps and `update.json` (see the README).
+
 ## On the device: previews and profiles
 
 Apps keep storage clean: only looks the user saves stay on disk.
