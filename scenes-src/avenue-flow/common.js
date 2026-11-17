@@ -1,5 +1,5 @@
 // Runner for Avenue Flow (from the b-422 concept round; plain WebGL2, no build step).
-// Scene({ L, frag, textures:{uName:url}, desktop:{cx,cy,zoom}, mobile:{cx,cy,zoom,rotate} })
+// Scene({ L, frag, textures:{uName:url}, uniforms:{uName:float}, desktop:{cx,cy,zoom}, mobile:{cx,cy,zoom,rotate} })
 //  - frames by viewport aspect (landscape -> desktop, portrait -> mobile); ?mode=desktop|mobile forces a
 //    16:9 / 9:20 letterboxed stage; ?t=<s> freezes time; loop time t = (now/1000) % L.
 //  - mobile.rotate: picture turned 90deg clockwise (reads upright with the phone on its side).
@@ -114,6 +114,7 @@ void main(){ vUv = vec2(aPos.x*0.5+0.5, 0.5-aPos.y*0.5); gl_Position = vec4(aPos
       gl.uniform2f(U('uVis0'), view.cx - view.sx / 2, view.cy - view.sy / 2);
       gl.uniform2f(U('uVis1'), view.cx + view.sx / 2, view.cy + view.sy / 2);
       gl.uniform1f(U('uRot'), view.rot); gl.uniform1f(U('uPx'), view.px);
+      for (const k in cfg.uniforms || {}) gl.uniform1f(U(k), cfg.uniforms[k]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     let last = -1e9, raf = 0;

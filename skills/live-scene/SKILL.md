@@ -68,6 +68,25 @@ livescenes check packs/<id>
 - Sizes: aim for ≤ 30 MB landscape and ≤ 15 MB portrait. Lower quality with a higher `--crf` (default 24;
   +2 ≈ 30 % smaller); grain and noise cost the most.
 
+### A level setting (optional)
+
+A look may offer **one** setting at three levels, weak / medium / strong (for example how strongly lights
+twinkle), when the user wants that choice. There is no live blending: each level is its own render of the
+same loop (same length, framing and timing), and the apps download only the level the user picks. Only
+offer it when the source can be rendered three times (a scene page with a strength parameter, a Blender
+value); never fake a level by filtering one video.
+
+```
+livescenes pack strong.mkv --portrait strong-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" \
+  --level strong --level-label Twinkle --level-default strong
+livescenes pack medium.mkv --portrait medium-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" --level medium
+livescenes pack weak.mkv --portrait weak-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" --level weak
+```
+
+Use the same pack options (focus, crf, …) for every level. `--level-default` is what the apps save first
+and what the poster shows. `check` fails until all three levels are packed. Look at a frame of each level:
+they must be clearly different from one another, with medium halfway in feel.
+
 ## 5. Design its Android theme (every look ships one)
 
 The Android app turns the phone's Material You theme to the look's own theme while it plays. Design it by

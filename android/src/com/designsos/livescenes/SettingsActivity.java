@@ -29,7 +29,10 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 import static com.designsos.livescenes.Ui.dp;
@@ -54,6 +57,8 @@ public class SettingsActivity extends Activity {
     static List<Catalog.Entry> lastCatalog;
     static String lastCatalogUrl;
     final Runnable onStore = () -> { renderProfiles(); renderCatalog(); };   // cards show what's saved
+    String levelLook, levelStatus;   // the saved look whose level is being downloaded, and how far it is
+    TextView levelNote;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -333,8 +338,98 @@ public class SettingsActivity extends Activity {
         }
         row.addView(actions);
 
+        JSONObject scene = store.scene(p.look);
+        JSONObject levels = scene != null ? scene.optJSONObject("levels") : null;
+        if (levels != null) row.addView(levelRow(p, levels.optString("label", "Level"), Store.level(scene)));
+
         row.setOnClickListener(v -> store.setActive(p.id));
         return row;
+    }
+
+    /** The look's level knob (FORMAT.md "Levels"): Weak / Medium / Strong, for every profile of the look. */
+    View levelRow(Store.Profile p, String label, String current) {
+        LinearLayout box = column();
+        LinearLayout line = new LinearLayout(this);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = Ui.text(this, label, 14);
+        name.setAlpha(0.7f);
+        name.setPadding(dp(this, 8), 0, dp(this, 4), 0);
+        line.addView(name);
+        for (String l : Store.LEVELS) {
+            Button b = Ui.flatButton(this, cap(l));
+            if (l.equals(current)) {
+                b.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+                b.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
+            } else {
+                b.setAlpha(0.6f);
+                b.setEnabled(levelLook == null);
+                b.setOnClickListener(v -> setLevel(p.look, label, l));
+            }
+            b.setContentDescription(label + " " + l + " for " + store.lookTitle(p.look));
+            line.addView(b);
+        }
+        box.addView(line);
+        if (p.look.equals(levelLook)) {
+            levelNote = Ui.text(this, levelStatus, 13);
+            levelNote.setAlpha(0.7f);
+            levelNote.setPadding(dp(this, 8), 0, 0, dp(this, 6));
+            box.addView(levelNote);
+        }
+        return box;
+    }
+
+    /** Downloads a level's video for a saved look from the catalog; it then replaces the saved one (and is deleted). */
+    void setLevel(String look, String label, String level) {
+        if (levelLook != null) return;
+        Catalog.Entry found = null;
+        if (catalog != null) for (Catalog.Entry e : catalog) if (e.id.equals(look)) found = e;
+        Catalog.Entry e;
+        try {
+            e = found != null ? found.atLevel(level) : null;
+        } catch (IOException x) {
+            e = null;
+        }
+        if (e == null || !level.equals(Store.level(e.json))) {
+            Toast.makeText(this, catalog == null ? "Load the catalog first: the " + label.toLowerCase() + " levels come from it"
+                    : "The catalog has no " + level + " " + label.toLowerCase() + " for this look", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Catalog.Entry at = e;
+        File dir = new File(getCacheDir(), "level"), file = new File(dir, look + "-" + level + ".mp4");
+        levelLook = look;
+        levelStatus = "Downloading " + level + " (" + Ui.size(this, at.bytes) + ")…";
+        renderProfiles();
+        Ui.NET.execute(() -> {
+            String error = null;
+            try {
+                dir.mkdirs();
+                Catalog.download(at.video, file, at.sha256, (done, total) -> runOnUiThread(() -> {
+                    levelStatus = "Downloading " + level + ": " + Ui.size(this, done) + " of " + Ui.size(this, at.bytes) + "…";
+                    if (levelNote != null) levelNote.setText(levelStatus);
+                }), () -> gone);
+                store.installLevel(at.json, at.orientation, file);   // dropped if the look was deleted meanwhile
+            } catch (IOException x) {
+                error = x.getMessage();
+            } finally {
+                file.delete();
+            }
+            String why = error;
+            runOnUiThread(() -> {
+                levelLook = null;
+                levelNote = null;
+                if (gone) return;
+                if (why != null) Toast.makeText(this, "Couldn't change the " + label.toLowerCase() + ": " + why, Toast.LENGTH_LONG).show();
+                renderProfiles();
+            });
+        });
+    }
+
+    /** The catalog has another video than the saved one, for the level the look is saved at. */
+    boolean newer(Catalog.Entry e) {
+        JSONObject saved = store.scene(e.id);
+        String level = Store.level(saved);
+        String sha = level != null ? Store.videoSha(Store.atLevel(e.json, level), e.orientation) : e.sha256;
+        return Store.isNewer(Store.videoSha(saved, e.orientation), sha);
     }
 
     static String speedLabel(float s) { return Store.speedLabel(s); }
@@ -438,7 +533,7 @@ public class SettingsActivity extends Activity {
         texts.setPadding(dp(this, 12), dp(this, 8), dp(this, 12), dp(this, 12));
         texts.addView(Ui.bold(this, e.title, 16));
         boolean saved = store.isSaved(e.id);
-        boolean newer = saved && Store.isNewer(Store.videoSha(store.scene(e.id), e.orientation), e.sha256);
+        boolean newer = saved && newer(e);
         TextView sub;
         if (saved) {
             int n = store.profilesFor(e.id).size();
@@ -472,8 +567,15 @@ public class SettingsActivity extends Activity {
      * A catalog look that is already saved: nothing is downloaded. Use one of its profiles, add one at another
      * speed (from the saved files), or, if the catalog has a newer video, update it (via the preview).
      */
-    void savedLook(Catalog.Entry e) {
-        boolean newer = Store.isNewer(Store.videoSha(store.scene(e.id), e.orientation), e.sha256);
+    void savedLook(Catalog.Entry look) {
+        boolean newer = newer(look);
+        Catalog.Entry e = look;
+        try {
+            e = look.atLevel(Store.level(store.scene(look.id)));   // an update keeps the saved level
+        } catch (IOException x) {
+            // the plain videos then
+        }
+        Catalog.Entry at = e;
         List<Store.Profile> using = store.profilesFor(e.id);
         Store.Profile active = store.activeProfile();
         LinearLayout v = column();
@@ -512,7 +614,7 @@ public class SettingsActivity extends Activity {
             Button b = Ui.flatButton(this, speedLabel(s));
             b.setContentDescription("Add a profile for " + e.title + " at " + speedLabel(s));
             b.setOnClickListener(x -> {
-                Store.Profile p = store.addProfile(e.id, s);
+                Store.Profile p = store.addProfile(look.id, s);
                 Toast.makeText(this, "Added “" + p.name + "”: it's the active profile now", Toast.LENGTH_LONG).show();
                 dialog[0].dismiss();
             });
@@ -527,7 +629,7 @@ public class SettingsActivity extends Activity {
                 .setTitle(e.title)
                 .setView(v)
                 .setNegativeButton("Close", null);
-        if (newer) b.setPositiveButton("Update", (d, w) -> preview(e));
+        if (newer) b.setPositiveButton("Update", (d, w) -> preview(at));
         dialog[0] = b.show();
     }
 

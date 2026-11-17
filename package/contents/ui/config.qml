@@ -46,6 +46,9 @@ ColumnLayout {
     property var progress: ({ state: "", bytes: 0, message: "", file: "" })
     property bool saving: false
 
+    // a saved look's level being downloaded: { id, level, kind, video, scene, bytes }
+    property var levelJob: null
+
     // updates of the plugin itself: the installed version (metadata.json on disk), the newer release
     // if there is one ({ version, notes, url, sha256, bytes }), and what is going on
     property string installedVersion: ""
@@ -187,19 +190,21 @@ ColumnLayout {
         });
     }
 
-    // a catalog entry with resolved URLs and the video a desktop downloads (landscape, else portrait)
+    // a catalog entry with resolved URLs and the video a desktop downloads (landscape, else portrait);
+    // a look with levels also has levels: { label, default, raw, videos: { <level>: video } }
     function catalogLook(l, base) {
         if (!l || !Store.validId(l.id) || !l.videos)
             return null;
-        let kind = "";
-        for (const k of ["landscape", "portrait"]) {
-            const v = l.videos[k];
-            if (v && typeof v.url === "string" && /^[0-9a-f]{64}$/.test(v.sha256) && Number(v.bytes) > 0) {
-                kind = k;
-                break;
+        const pick = catalogVideo(l.videos, base);
+        let levels = null;
+        if (l.levels && l.levels.videos) {
+            levels = { label: String(l.levels.label || "Level"), "default": Store.level({ levels: l.levels }),
+                       raw: l.levels, videos: {} };
+            for (const lv of Store.LEVELS) {
+                const p = catalogVideo(l.levels.videos[lv] || {}, base);
+                levels.videos[lv] = p.kind === pick.kind ? p.video : null;
             }
         }
-        const v = kind ? l.videos[kind] : null;
         return {
             id: l.id,
             title: String(l.title || l.id),
@@ -208,13 +213,32 @@ ColumnLayout {
             description: String(l.description || ""),
             loop: Number(l.loop) || 0,
             posterUrl: l.poster ? Store.resolveUrl(base, l.poster) : "",
-            kind: kind,
-            video: v ? {
-                url: Store.resolveUrl(base, v.url), width: Number(v.width) || 0, height: Number(v.height) || 0,
-                fps: Number(v.fps) || 0, bytes: Number(v.bytes), sha256: v.sha256,
-                focus: Array.isArray(v.focus) && v.focus.length === 2 ? [Store.fraction(v.focus[0]), Store.fraction(v.focus[1])] : [0.5, 0.5]
-            } : null
+            kind: pick.kind,
+            video: pick.video,
+            levels: levels
         };
+    }
+
+    // the video of a catalog "videos" object a desktop downloads -> { kind, video }
+    function catalogVideo(videos, base) {
+        for (const k of ["landscape", "portrait"]) {
+            const v = videos[k];
+            if (v && typeof v.url === "string" && /^[0-9a-f]{64}$/.test(v.sha256) && Number(v.bytes) > 0)
+                return { kind: k, video: {
+                    url: Store.resolveUrl(base, v.url), width: Number(v.width) || 0, height: Number(v.height) || 0,
+                    fps: Number(v.fps) || 0, bytes: Number(v.bytes), sha256: v.sha256,
+                    focus: Array.isArray(v.focus) && v.focus.length === 2 ? [Store.fraction(v.focus[0]), Store.fraction(v.focus[1])] : [0.5, 0.5]
+                } };
+        }
+        return { kind: "", video: null };
+    }
+
+    // the scene.json entry of a downloaded video, saved as `file`
+    function savedEntry(v, file) {
+        const entry = { file: file, width: v.width, height: v.height, bytes: v.bytes, sha256: v.sha256, focus: v.focus };
+        if (v.fps)
+            entry.fps = v.fps;
+        return entry;
     }
 
     function startPreview(look) {
@@ -259,18 +283,19 @@ ColumnLayout {
         const look = page.preview;
         if (!look || page.progress.state !== "done")
             return;
-        const v = look.video;
-        const entry = { file: look.kind + ".mp4", width: v.width, height: v.height, bytes: v.bytes,
-                        sha256: v.sha256, focus: v.focus };
-        if (v.fps)
-            entry.fps = v.fps;
+        // a look with levels is saved at its default level (the plain videos), its file named after it
+        const file = look.kind + (look.levels ? "-" + look.levels["default"] : "") + ".mp4";
         const scene = { format: 1, id: look.id, title: look.title, author: look.author, license: look.license,
                         description: look.description, loop: look.loop, videos: {} };
-        scene.videos[look.kind] = entry;
+        scene.videos[look.kind] = savedEntry(look.video, file);
+        if (look.levels) {
+            scene.levels = look.levels.raw;
+            scene.level = look.levels["default"];
+        }
         const name = previewName.text.trim() || look.title;
         const speed = Store.SPEEDS[previewSpeed.currentIndex];
         page.saving = true;
-        helper.run(["save", look.id, JSON.stringify(scene, null, 2)], out => {
+        helper.run(["save", look.id, JSON.stringify(scene, null, 2), file], out => {
             page.saving = false;
             const r = Store.parseJson(out);
             if (!r || !r.ok) {
@@ -280,6 +305,76 @@ ColumnLayout {
             page.preview = null;              // the preview folder is gone now
             page.progress = { state: "", bytes: 0, message: "", file: "" };
             page.addProfile(look.id, name, speed);
+        });
+    }
+
+    // Change a saved look's level: download that level's video from the catalog (as a preview), then
+    // it replaces the saved one, which is deleted. Every profile of the look plays the new level.
+    function setLevel(lookId, level) {
+        const saved = page.store ? page.store.looks[lookId] : null;
+        const c = page.catalog.find(l => l.id === lookId);
+        const v = c && c.levels ? c.levels.videos[level] : null;
+        if (!saved || page.levelJob)
+            return;
+        if (!v) {
+            page.error = c ? "The catalog has no " + level + " level of " + c.title + "."
+                           : "Load the catalog first: the levels come from it.";
+            return;
+        }
+        page.levelJob = { id: lookId, level: level, kind: c.kind, video: v, scene: saved.scene, bytes: 0 };
+        helper.run(["fetch", lookId, c.kind, v.url, v.sha256, String(v.bytes)], out => {
+            const r = Store.parseJson(out);
+            if (!r || !r.ok)
+                page.levelFailed(r && r.error ? r.error : out);
+        });
+    }
+
+    function levelFailed(message) {
+        if (page.levelJob)
+            page.error = "Cannot change the level: " + message;
+        page.levelJob = null;
+    }
+
+    function pollLevel() {
+        const job = page.levelJob;
+        if (!job || job.saving)
+            return;
+        helper.run(["progress", job.id], out => {
+            const r = Store.parseJson(out);
+            if (page.levelJob !== job || !r || job.saving)
+                return;                              // another reply already started the save
+            if (r.state === "error" || r.state === "none") {
+                helper.run(["discard", job.id]);
+                page.levelFailed(r.message || "the download was removed");
+            } else if (r.state === "done") {
+                job.saving = true;
+                helper.run(["state"], out => {
+                    // the look's last profile was deleted while it downloaded: drop the download
+                    const st = Store.parseState(out);
+                    if (!st.ok || !st.looks[job.id] || Store.profilesUsing(st, job.id).length === 0) {
+                        helper.run(["discard", job.id]);
+                        page.levelJob = null;
+                        return;
+                    }
+                    const file = job.kind + "-" + job.level + ".mp4";
+                    const scene = JSON.parse(JSON.stringify(job.scene));
+                    scene.level = job.level;
+                    scene.videos = {};
+                    scene.videos[job.kind] = page.savedEntry(job.video, file);
+                    helper.run(["save", job.id, JSON.stringify(scene, null, 2), file], res => {
+                        const s = Store.parseJson(res);
+                        if (!s || !s.ok) {
+                            helper.run(["discard", job.id]);
+                            page.levelFailed(s && s.error ? s.error : res);
+                            return;
+                        }
+                        page.levelJob = null;
+                        page.editProfiles(raw => {});    // rewriting profiles.json makes the wallpapers re-read the looks
+                    });
+                });
+            } else if (r.bytes !== job.bytes) {
+                page.levelJob = Object.assign({}, job, { bytes: r.bytes });
+            }
         });
     }
 
@@ -348,6 +443,12 @@ ColumnLayout {
         running: page.preview !== null
         onTriggered: page.pollPreview()
     }
+    Timer {
+        interval: 400
+        repeat: true
+        running: page.levelJob !== null
+        onTriggered: page.pollLevel()
+    }
 
     // profiles.json changed elsewhere (another screen's settings, `livescenes add`): show it
     FolderListModel {
@@ -368,6 +469,8 @@ ColumnLayout {
     Component.onDestruction: {
         if (page.preview)
             helper.run(["discard", page.preview.id]);
+        if (page.levelJob && !page.levelJob.saving)
+            helper.run(["discard", page.levelJob.id]);
     }
 
     // ---------------------------------------------------------------- profiles
@@ -541,13 +644,39 @@ ColumnLayout {
                 }
                 QQC2.Label {
                     Layout.fillWidth: true
-                    text: Store.lookTitle(page.store, row.modelData.look)
-                        + (row.look ? " · " + Store.formatBytes(row.look.bytes) : " · missing")
-                        + (row.modelData.id === page.store.profiles.active ? " · default" : "")
+                    text: {
+                        const job = page.levelJob;
+                        if (job && job.id === row.modelData.look)
+                            return "Downloading " + job.level + ": " + Store.formatBytes(job.bytes) + " of "
+                                + Store.formatBytes(job.video.bytes) + "…";
+                        return Store.lookTitle(page.store, row.modelData.look)
+                            + (row.look ? " · " + Store.formatBytes(row.look.bytes) : " · missing")
+                            + (row.modelData.id === page.store.profiles.active ? " · default" : "");
+                    }
                     font: Kirigami.Theme.smallFont
                     opacity: 0.7
                     elide: Text.ElideRight
                 }
+            }
+
+            // the look's level knob (sdk/FORMAT.md, "Levels"): shared by every profile of the look
+            QQC2.ComboBox {
+                readonly property var levels: row.look && row.look.scene.levels ? row.look.scene.levels : null
+                visible: levels !== null
+                enabled: page.levelJob === null
+                model: Store.LEVELS.map(Store.levelLabel)
+                displayText: (levels ? String(levels.label || "Level") + ": " : "") + currentText
+                // the saved level until the new one is in place
+                currentIndex: Math.max(0, Store.LEVELS.indexOf(Store.level(row.look ? row.look.scene : null)))
+                onActivated: index => {
+                    const level = Store.LEVELS[index];
+                    currentIndex = Qt.binding(() => Math.max(0, Store.LEVELS.indexOf(Store.level(row.look ? row.look.scene : null))));
+                    if (level !== Store.level(row.look.scene))
+                        page.setLevel(row.modelData.look, level);
+                }
+                QQC2.ToolTip.text: (levels ? String(levels.label || "Level") : "") + " (every profile of this look)"
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
             }
 
             QQC2.ComboBox {

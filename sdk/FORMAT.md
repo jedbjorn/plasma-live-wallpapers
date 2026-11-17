@@ -47,7 +47,41 @@ For distribution it is zipped as `<id>.zip` with the folder at the zip root.
   sideways). Players ignore it and play the video as it is. Copied into the catalog entry too.
 - `theme` (optional for readers; the SDK requires it for new looks): the look's Android theme, colors chosen
   by hand so the phone's Material You theme matches the look. See [Themes](#themes). Copied into the catalog entry.
+- `levels` (optional): the look's one level knob, three renders of it to choose from. See [Levels](#levels).
 - Unknown keys must be ignored by readers. `format` changes only for incompatible changes.
+
+### Levels
+
+A look may have **one** knob with exactly three levels, `weak`, `medium` and `strong` (for example how strongly
+the city lights of Avenue Flow twinkle). Each level is a separate render of the same loop, with its own
+landscape and portrait videos; the poster is shared (it shows the default level). Nothing is blended at play
+time: a level is just another video.
+
+```json
+"videos": { "landscape": { "file": "landscape-strong.mp4", … }, "portrait": { "file": "portrait-strong.mp4", … } },
+"levels": {
+  "label": "Twinkle",
+  "default": "strong",
+  "videos": {
+    "weak":   { "landscape": { "file": "landscape-weak.mp4", … },   "portrait": { "file": "portrait-weak.mp4", … } },
+    "medium": { "landscape": { "file": "landscape-medium.mp4", … }, "portrait": { "file": "portrait-medium.mp4", … } },
+    "strong": { "landscape": { "file": "landscape-strong.mp4", … }, "portrait": { "file": "portrait-strong.mp4", … } }
+  }
+}
+```
+
+- `label`: the knob's name in the apps. `default`: the level downloaded first.
+- `videos.<level>`: a `videos` object as above (same orientations, sizes and `loop` for every level).
+- The plain `videos` are always the default level's (the same entries), so a reader that ignores `levels`
+  plays the default level.
+- Pack files: `<orientation>-<level>.mp4`. The catalog entry carries `levels` the same way, with `url`s
+  (`<id>-<orientation>-<level>.mp4`).
+- Apps (Android, Plasma) show a Weak / Medium / Strong picker with the label for saved looks that have
+  `levels`. A saved look keeps one level (see [On the device](#on-the-device-previews-and-profiles)); changing
+  it downloads that level's video from the catalog and deletes the old one. All profiles of the look play
+  the chosen level. macOS ignores `levels` for now and plays the default level.
+- When the catalog loads, Android gives a saved look without `levels` the catalog entry's `levels` if its
+  video is the catalog's default level (a look that got levels later); no download.
 
 ### Themes
 
@@ -86,7 +120,8 @@ For distribution it is zipped as `<id>.zip` with the folder at the zip root.
 - Scale to **fill** the screen (aspect fill), then shift the crop so the focus point is as close to the
   screen centre as the video's edges allow.
 - Pick the video whose orientation matches the screen; if missing, crop the other one.
-- Speed presets: **0.5×, 1×, 2×** (playback rate). Nothing else is configurable per look.
+- Speed presets: **0.5×, 1×, 2×** (playback rate). Besides, a look with `levels` plays the chosen level's
+  video. Nothing else is configurable per look.
 - Pause whenever the wallpaper is hidden (apps over it, screen off, locked without it showing).
 
 ## Catalog
@@ -116,7 +151,9 @@ Every app must let the catalog URL be overridden (for testing and for third-part
 ```
 
 URLs may be relative; they resolve against the catalog's own URL. Release assets are flat:
-`<id>-landscape.mp4`, `<id>-portrait.mp4`, `<id>-poster.jpg`, plus `catalog.json`.
+`<id>-landscape.mp4`, `<id>-portrait.mp4`, `<id>-poster.jpg`, plus `catalog.json`. A look with
+[levels](#levels) has `<id>-<orientation>-<level>.mp4` for all three levels instead, listed under its entry's
+`levels.videos` (the plain `videos` repeat the default level's).
 
 ## App updates
 
@@ -157,7 +194,11 @@ Apps keep storage clean: only looks the user saves stay on disk.
 - **Browse**: the catalog and posters only (posters may be cached in the cache folder).
 - **Preview**: download only the one video this device needs (portrait on phones, landscape on desktops)
   into the **cache** folder, verify its sha256, play it. Leaving the preview without saving deletes it;
-  leftovers in the preview cache are deleted at every launch.
+  leftovers in the preview cache are deleted at every launch. A look with levels is previewed and saved at
+  its default level.
+- **Level** (looks with `levels`): the saved look's level is changed in its profile's settings: the app
+  downloads that level's video for this device from the catalog (sha256 checked), puts it in place of the
+  old one and deletes the old one. Only the chosen level's video is ever on disk.
 - **Save as profile**: move the previewed video into permanent storage and create a profile.
   A profile is `{ "id", "name", "look", "speed" }`. Several profiles may share one look; the look's
   files are deleted when no profile uses it any more. The active profile cannot be deleted.
@@ -178,9 +219,14 @@ Inside the saved-data folder:
 ```
 looks/<id>/scene.json
 looks/<id>/landscape.mp4 or portrait.mp4   (only the orientation this device uses)
+looks/<id>/landscape-<level>.mp4 or portrait-<level>.mp4   (instead, for a look with levels)
 looks/<id>/poster.jpg
 profiles.json   { "format": 1, "active": "<profile id>", "profiles": [ { "id": "…", "name": "Hall", "look": "hall", "speed": 1.0 } ] }
 ```
+
+A saved look's `scene.json` lists only the video on disk under `videos`. A look with levels keeps its
+`levels` (to show the picker) and adds `"level": "<level>"`, the level that file is; its file is named
+`<orientation>-<level>.mp4`, so a level change is a new file to the players.
 
 Android imports: packs pushed to the app's external files dir `import/<id>/` (reachable with
 `adb push` without root) are imported on the next launch, then removed from `import/`. Files pushed by

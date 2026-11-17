@@ -32,6 +32,13 @@ final class Catalog {
         URL video;
         long bytes;
         String sha256;
+        URL base;                 // the catalog's URL
+        String want;              // the device's orientation
+
+        /** This look at a level (FORMAT.md "Levels"): json, video, bytes and sha256 are that level's. */
+        Entry atLevel(String level) throws IOException {
+            return level == null ? this : entry(Store.atLevel(json, level), base, want);
+        }
     }
 
     interface Progress { void update(long done, long total); }
@@ -48,27 +55,35 @@ final class Catalog {
         JSONArray looks = o.optJSONArray("looks");
         for (int i = 0; looks != null && i < looks.length(); i++) {
             JSONObject l = looks.optJSONObject(i);
-            JSONObject videos = l != null ? l.optJSONObject("videos") : null;
-            if (videos == null || !l.optString("id").matches("[a-z0-9-]+")) continue;
-            Entry e = new Entry();
-            e.json = l;
-            e.id = l.optString("id");
-            e.title = l.optString("title", e.id);
-            e.description = l.optString("description", "");
-            if (!l.optString("poster").isEmpty()) e.poster = new URL(base, l.optString("poster"));
-            String other = orientation.equals("portrait") ? "landscape" : "portrait";
-            for (String c : new String[]{orientation, other}) {
-                JSONObject v = videos.optJSONObject(c);
-                if (v == null || v.optString("url").isEmpty()) continue;
-                e.orientation = c;
-                e.video = new URL(base, v.optString("url"));
-                e.bytes = v.optLong("bytes");
-                e.sha256 = v.optString("sha256", "");
-                break;
-            }
-            if (e.video != null) list.add(e);
+            Entry e = l != null ? entry(l, base, orientation) : null;
+            if (e != null) list.add(e);
         }
         return list;
+    }
+
+    /** A catalog look with the video this device would download, or null if it has none. */
+    static Entry entry(JSONObject l, URL base, String orientation) throws IOException {
+        JSONObject videos = l.optJSONObject("videos");
+        if (videos == null || !l.optString("id").matches("[a-z0-9-]+")) return null;
+        Entry e = new Entry();
+        e.json = l;
+        e.base = base;
+        e.want = orientation;
+        e.id = l.optString("id");
+        e.title = l.optString("title", e.id);
+        e.description = l.optString("description", "");
+        if (!l.optString("poster").isEmpty()) e.poster = new URL(base, l.optString("poster"));
+        String other = orientation.equals("portrait") ? "landscape" : "portrait";
+        for (String c : new String[]{orientation, other}) {
+            JSONObject v = videos.optJSONObject(c);
+            if (v == null || v.optString("url").isEmpty()) continue;
+            e.orientation = c;
+            e.video = new URL(base, v.optString("url"));
+            e.bytes = v.optLong("bytes");
+            e.sha256 = v.optString("sha256", "");
+            break;
+        }
+        return e.video != null ? e : null;
     }
 
     /** A small file (the catalog, the update manifest); tried once more if the server doesn't answer in time. */

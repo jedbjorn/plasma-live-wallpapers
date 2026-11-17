@@ -4,9 +4,10 @@
 
 var DEFAULT_CATALOG = "https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest/download/catalog.json";
 var SPEEDS = [0.5, 1.0, 2.0];
+var LEVELS = ["weak", "medium", "strong"];      // a look's level knob (sdk/FORMAT.md, "Levels")
 // The version of this code. plasmashell keeps it loaded after an upgrade, so it can differ from the
 // installed metadata.json until the shell restarts. release.sh checks it against the VERSION file.
-var VERSION = "2.2.0";
+var VERSION = "2.3.0";
 
 function validId(id) {
     return typeof id === "string" && /^[a-z0-9-]{1,64}$/.test(id) && id[0] !== "-";
@@ -233,4 +234,15 @@ function formatBytes(n) {
 
 function speedLabel(v) {
     return (v === 0.5 ? "0.5" : String(v)) + "×";
+}
+
+// the level a scene's videos are (its "level", else its default), or "" for a look without levels
+function level(scene) {
+    if (!scene || !scene.levels)
+        return "";
+    return LEVELS.indexOf(scene.level) >= 0 ? scene.level : (scene.levels["default"] || "strong");
+}
+
+function levelLabel(l) {
+    return l.charAt(0).toUpperCase() + l.slice(1);
 }
