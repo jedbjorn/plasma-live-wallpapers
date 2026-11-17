@@ -80,6 +80,8 @@ time: a level is just another video.
   `levels`. A saved look keeps one level (see [On the device](#on-the-device-previews-and-profiles)); changing
   it downloads that level's video from the catalog and deletes the old one. All profiles of the look play
   the chosen level. macOS ignores `levels` for now and plays the default level.
+- When the catalog loads, Android gives a saved look without `levels` the catalog entry's `levels` if its
+  video is the catalog's default level (a look that got levels later); no download.
 
 ### Themes
 
