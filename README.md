@@ -135,7 +135,7 @@ From a checkout, run `git pull && ./android/build.sh --install`. To uninstall, c
 
 The wallpaper decodes the video with the phone's hardware decoder straight onto the wallpaper surface; it doesn't use the GPU unless a look needs an off-centre crop of the other orientation. Measured with the Pixel 6's on-device power meters, the Hall look on the home screen costs about **3 mAh per hour** over a hidden wallpaper, against about 114 mAh per hour for the earlier version that rendered the scene live. It uses nothing while hidden.
 
-**Low battery:** below a battery level you choose in the app (Battery > Still frame below: Off, 20%, 30% or 50%; 50% by default), the wallpaper shows a still image of the look and shuts the video player down completely: no decoder, no thread, no GPU work after the one frame is drawn. It plays again while charging, or once the battery is back at or above that level.
+**Low battery:** below a battery level you choose in the app (Battery > Still frame below: 25%, 50% or 75%; 50% by default), the wallpaper shows a still image of the look and shuts the video player down completely: no decoder, no thread, no GPU work after the one frame is drawn. It plays again while charging, or once the battery is back at or above that level.
 
 ### Theme
 

@@ -77,7 +77,7 @@ public class LiveWallpaperService extends WallpaperService {
 
     void updateFrozen() {
         int below = prefs.freezeBelow();
-        boolean f = below > 0 && !charging && batteryPct < below;
+        boolean f = !charging && batteryPct < below;
         if (f == frozen) return;
         frozen = f;
         Log.i(TAG, f ? "battery " + batteryPct + "% < " + below + "%: still frame" : "battery " + batteryPct + "%"

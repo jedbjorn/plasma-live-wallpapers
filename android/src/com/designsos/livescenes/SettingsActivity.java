@@ -551,14 +551,14 @@ public class SettingsActivity extends Activity {
         batteryBox.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         int current = prefs.freezeBelow();
         for (int level : Prefs.FREEZE_LEVELS) {
-            Button b = Ui.flatButton(this, level == 0 ? "Off" : level + "%");
+            Button b = Ui.flatButton(this, level + "%");
             if (level == current) {
                 b.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
                 b.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
             } else {
                 b.setAlpha(0.6f);
             }
-            b.setContentDescription(level == 0 ? "Always play the video" : "Still frame below " + level + "% battery");
+            b.setContentDescription("Still frame below " + level + "% battery");
             b.setOnClickListener(v -> {
                 prefs.p.edit().putInt(Prefs.FREEZE_BELOW, level).apply();
                 renderBattery();

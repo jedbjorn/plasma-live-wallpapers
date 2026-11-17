@@ -12,8 +12,8 @@ final class Prefs {
     static final String THEME_ORIGINAL = "themeOriginal", THEME_WRITTEN = "themeWritten";
     /** The last update check: when (ms), and the manifest it got (see {@link Update}). */
     static final String UPDATE_CHECKED = "updateChecked", UPDATE_MANIFEST = "updateManifest";
-    /** Battery levels (%) the wallpaper can freeze below; 0 = never. */
-    static final int[] FREEZE_LEVELS = {0, 20, 30, 50};
+    /** Battery levels (%) the wallpaper can freeze below: one of these, always. */
+    static final int[] FREEZE_LEVELS = {25, 50, 75};
     static final int DEFAULT_FREEZE_BELOW = 50;
     static final String DEFAULT_CATALOG =
             "https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest/download/catalog.json";
@@ -37,6 +37,13 @@ final class Prefs {
     /** Apply the look's theme at once through the system setting (only works with WRITE_SECURE_SETTINGS). */
     boolean themeNow() { return p.getBoolean(THEME_NOW, false); }
 
-    /** Below this battery level (%), unless charging, the wallpaper stops on a still frame; 0 = never. */
-    int freezeBelow() { return p.getInt(FREEZE_BELOW, DEFAULT_FREEZE_BELOW); }
+    /**
+     * Below this battery level (%), unless charging, the wallpaper stops on a still frame. A level saved by an
+     * older version that is no longer offered (0 = never, 20, 30) reads as the nearest one offered.
+     */
+    int freezeBelow() {
+        int v = p.getInt(FREEZE_BELOW, DEFAULT_FREEZE_BELOW), best = FREEZE_LEVELS[0];
+        for (int l : FREEZE_LEVELS) if (Math.abs(l - v) < Math.abs(best - v)) best = l;
+        return best;
+    }
 }
