@@ -6,19 +6,21 @@
 </head><body>
 <script>
 // Avenue Flow plus twinkling city lights. Moving traffic on the avenue; the photo's own lamps
-// (lights.png) shimmer softly and about a quarter of them dim and return, staggered across the city.
-// Twinkle cycles per loop: 2, 3, 7, 11 and 1 (all whole numbers, so they divide the 20 s loop).
+// (lights.png) twinkle: a 1.2 Hz shimmer, brief glints with halos, and about 85% of the point lamps dipping
+// to dark and returning, staggered across the city. Each light blob has one random phase (lamps.png), so it
+// changes as a whole; large lit roofs only swell gently. A dimmed lamp never goes darker than the picture
+// without it. Twinkle cycles per loop: 24, 6, 4, 3, 2 and 1 (all whole numbers, so they divide the 20 s loop).
 // Avenue Flow: The static traffic on the main avenue is dimmed and replaced by moving cars:
 // red tail lights climbing to the horizon, white headlights coming down, with short light trails and
 // perspective-correct speed. Sparse traffic on three side streets and sparkles on the far-left freeway.
 // Loop 20 s: each lane is a row of cells whose car pattern repeats every k cells and travels exactly k cells per loop.
 Scene({
   title: 'Avenue Flow', L: 20,
-  textures: { uImg: 'still.jpg', uLights: 'lights.png' },
+  textures: { uImg: 'still.jpg', uLights: 'lights.png', uLamps: 'lamps.png' },
   desktop: { cx: 0.5, cy: 0.58, zoom: 1.12 },
   mobile: { cx: 0.514, cy: 0.61, zoom: 1.35 },
   frag: `
-uniform sampler2D uImg, uLights; uniform float uLightsLod;
+uniform sampler2D uImg, uLights, uLamps; uniform float uLightsLod, uImgLod;
 const float YH = 1105.0;                       // horizon row, picture px
 const float WN = 1.0 / 2150.0, WF = 1.0 / 112.0;
 const int NP = 10;
@@ -119,20 +121,35 @@ void main(){
     float ph = uT / uL;
     float keep = 1.0 - exp(-(ax*ax) / (hw*hw*5.0)) * vis;
     float far = 1.0 - smoothstep(1150.0, 2600.0, P.y);
-    float n1 = vn(P / 46.0), n2 = vn(P / 61.0 + 31.7), n3 = vn(P / 38.0 + 77.1), n4 = vn(P / 85.0 + 5.3);
-    float breathe = sin(TAU * (n1 * 2.0 + 2.0 * ph));
-    float drift   = sin(TAU * (n2 * 2.0 - 3.0 * ph));
-    float scint   = sin(TAU * (n3 * 3.0 + 11.0 * ph)) * sin(TAU * (n1 * 2.0 - 7.0 * ph));
-    float gain = 1.0 + 0.50 * breathe + 0.30 * drift + (0.28 + 0.50 * far) * scint;
-    // about a quarter of the lamps dim right down and come back, each at its own moment in the loop
-    float pick = smoothstep(0.56, 0.64, n4);
-    float sw = smoothstep(-0.25, 0.25, sin(TAU * (vn(P / 85.0 + 140.0) * 2.0 + ph)));
-    gain *= mix(1.0, mix(0.10, 1.25, sw), pick);
-    gain = max(gain, 0.0);
-    col += lt * (gain - 1.0) * 1.25 * keep;
-    // halo follows the lamp, so a brightening light also blooms a little
-    col += textureLod(uLights, uv, max(0.0, uLightsLod + 3.0)).rgb * 0.9 * max(gain - 0.6, 0.0) * keep;
+    // lamps.png: one pair of random phases per light blob (so a blob changes as a whole, no bands across
+    // it), and its lampness: 1 for point lamps, 0 for big lit roofs and for the unlit background
+    vec3 lp = textureLod(uLamps, uv, 0.0).rgb;
+    float r1 = lp.r, r2 = lp.g, lampness = lp.b;
+    float r3 = fract(r1 * 5.0 + r2 * 3.0), r4 = fract(r1 * 11.0 + r2 * 7.0), r5 = fract(r1 * 3.0 + r2 * 13.0);
+    // point lamps: 1.2 Hz shimmer (24 cycles per loop) riding on a slow breathing (2 cycles per loop)
+    float shim = sin(TAU * (r1 + 24.0 * ph)) * (0.6 + 0.4 * sin(TAU * (r2 - 3.0 * ph)));
+    float breathe = sin(TAU * (r2 + 2.0 * ph));
+    float g = (1.0 + 0.45 * breathe) * (1.0 + (0.95 + 0.05 * far) * shim);
+    // glints: each lamp flares briefly 6 times per loop, at its own moment
+    g += 2.8 * pow(0.5 + 0.5 * sin(TAU * (r3 - 6.0 * ph)), 5.0);
+    // dips: about 85% of the lamps go dark and return, 4 times per loop, each at its own moment
+    float sw = smoothstep(-0.75, -0.30, sin(TAU * (r5 + 4.0 * ph)));
+    g *= mix(1.0, mix(0.0, 1.15, sw), step(r4, 0.85));
+    // a slow swell crossing the city once per loop, so whole neighbourhoods rise and settle
+    float swell = sin(TAU * (fbm(P / 800.0) * 2.0 - ph));
+    g *= 1.0 + 0.24 * swell;
+    // large lit roofs and facades stay calm: the swell and a little whole-blob breathing only
+    float gRoof = 1.0 + 0.16 * swell + 0.14 * breathe;
+    float gain = max(mix(gRoof, g, lampness), 0.0);
+    // a dimmed lamp fades to the picture without that lamp (img - lt), never darker; peaks may overshoot
+    col += lt * (gain < 1.0 ? gain - 1.0 : (gain - 1.0) * 2.2) * keep;
+    // halos carry most of the visible change (the lamp cores are already near white)
+    vec3 hA = textureLod(uLights, uv, max(0.0, uLightsLod + 2.6)).rgb;
+    vec3 hB = textureLod(uLights, uv, max(0.0, uLightsLod + 4.2)).rgb;
+    col += (hA * (1.95 + 2.0 * lampness) + hB * (1.8 + 0.4 * lampness)) * min(max(gain - 0.35, 0.0), 1.9) * keep;   // capped so a glint glows instead of burning a white disc
   }
+  // floor: nothing dimmed above (lamps, the frozen traffic) may end up darker than its unlit surroundings
+  col = max(col, min(img, textureLod(uImg, uv, max(0.0, uImgLod + 4.0)).rgb * 0.8));
   col += add;
   // soft bloom of the picture's own lights so the new ones sit in the same air
   col += textureLod(uLights, uv, max(0.0, uLightsLod + 4.0)).rgb * 0.5;
