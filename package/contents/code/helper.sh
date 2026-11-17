@@ -12,7 +12,9 @@
 #                                  and keep the preview alive (see below)
 #   discard <id>                   stop and delete one preview
 #   clear-previews [<minutes>]     stop and delete all previews (only those older than <minutes>)
-#   save <id> <scene json>         move a finished preview into looks/<id>/ with this scene.json
+#   save <id> <scene json> [<file>]
+#                                  move a finished preview into looks/<id>/ with this scene.json, the video
+#                                  named <file> (default <landscape|portrait>.mp4), replacing what was there
 #   write-profiles <json>          replace profiles.json (atomically)
 #   delete-look <id>               delete looks/<id>/
 #   version                        print the installed version (metadata.json)
@@ -107,11 +109,11 @@ last_line() {
     printf '%s' "$1" | tail -n 1 | tr -d '"\\' | cut -c1-200
 }
 
-# the video files present in a look folder: "landscape.mp4,portrait.mp4", or "-"
+# the video files present in a look folder: "landscape.mp4,portrait.mp4" (or landscape-<level>.mp4, ...), or "-"
 videos() {
     list=""
-    for f in landscape.mp4 portrait.mp4; do
-        [ -f "$1/$f" ] && list="$list${list:+,}$f"
+    for f in "$1"/landscape*.mp4 "$1"/portrait*.mp4; do
+        [ -f "$f" ] && list="$list${list:+,}$(basename "$f")"
     done
     echo "${list:--}"
 }
@@ -198,9 +200,11 @@ _worker)
         valid_int "$beat" || return 0
         [ $(( $(date +%s) - beat )) -gt "$STALE" ]
     }
+    # the folder is still this worker's (after a save, a new fetch of the same look makes a new one)
+    mine() { [ "$(cat "$dir/pid" 2>/dev/null)" = "$$" ]; }
     cleanup() {
         [ -n "$cpid" ] && kill "$cpid" 2>/dev/null
-        rm -rf "$dir"
+        mine && rm -rf "$dir"
         exit 0
     }
     trap cleanup TERM INT HUP
@@ -235,7 +239,7 @@ _worker)
     fi
     rm -f "$dir/curl.log"
     # stay around until the preview is saved (the folder disappears) or abandoned
-    while [ -d "$dir" ] && ! abandoned; do
+    while mine && ! abandoned; do
         sleep 2
     done
     cleanup
@@ -296,10 +300,11 @@ clear-previews)
     ;;
 
 save)
-    [ $# -ge 2 ] || die "usage: save <id> <scene json>"
-    id=$1; scene=$2
+    [ $# -ge 2 ] || die "usage: save <id> <scene json> [<video file name>]"
+    id=$1; scene=$2; name="${3:-}"
     valid_id "$id" || die "invalid id"
     case "$scene" in "{"*"}") ;; *) die "invalid scene.json" ;; esac
+    case "$name" in ""|landscape.mp4|portrait.mp4|landscape-[a-z]*.mp4|portrait-[a-z]*.mp4) ;; *) die "invalid file name" ;; esac
     src="$PREVIEW/$id"
     [ "$(head -n 1 "$src/status" 2>/dev/null)" = "done" ] || die "the preview is not ready"
     mkdir -p "$DATA/looks" || die "cannot create $DATA/looks"
@@ -309,11 +314,14 @@ save)
     moved=0
     for kind in landscape portrait; do
         [ -f "$src/$kind.mp4" ] || continue
-        mv "$src/$kind.mp4" "$tmp/$kind.mp4" || { rm -rf "$tmp"; die "cannot move the video"; }
+        mv "$src/$kind.mp4" "$tmp/${name:-$kind.mp4}" || { rm -rf "$tmp"; die "cannot move the video"; }
         moved=1
     done
     [ "$moved" -eq 1 ] || { rm -rf "$tmp"; die "the preview has no video"; }
-    [ -f "$src/poster.jpg" ] && mv "$src/poster.jpg" "$tmp/poster.jpg"
+    # the preview's poster, else the saved one (a level change downloads only the video)
+    if [ -f "$src/poster.jpg" ]; then mv "$src/poster.jpg" "$tmp/poster.jpg"
+    elif [ -f "$DATA/looks/$id/poster.jpg" ]; then mv "$DATA/looks/$id/poster.jpg" "$tmp/poster.jpg"
+    fi
     printf '%s\n' "$scene" > "$tmp/scene.json"
     rm -rf "${DATA:?}/looks/$id"
     mv "$tmp" "$DATA/looks/$id" || die "cannot move the look into place"
