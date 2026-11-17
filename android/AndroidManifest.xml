@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- in-app updates: hand a downloaded release APK to the system installer, which asks the user -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- optional, never granted by installing: "change the theme at once" writes the system theme setting only if the
+         user grants this over adb (adb shell pm grant com.designsos.livescenes android.permission.WRITE_SECURE_SETTINGS) -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
     <application
         android:name=".App"

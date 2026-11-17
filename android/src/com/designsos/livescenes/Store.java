@@ -55,6 +55,8 @@ final class Store {
         float focusX = 0.5f, focusY = 0.5f;
         float speed = 1f;
         File poster;           // null for the bundled look (asset DEFAULT_ASSETS/poster.jpg)
+        Theme theme;           // the look's Android theme, or null
+        String themeJson;      // as written in scene.json, to notice a change
 
         /** Changes when a different file should play (a speed change alone doesn't restart playback). */
         String key() {
@@ -262,6 +264,35 @@ final class Store {
                 && !savedSha.equalsIgnoreCase(catalogSha);
     }
 
+    /**
+     * Gives saved looks the theme of their catalog entry (looks saved before themes existed, or whose theme changed
+     * since), in their scene.json; the video stays. The playing wallpaper picks it up. Returns the looks updated.
+     */
+    List<String> syncThemes(List<Catalog.Entry> catalog) {
+        List<String> done = new ArrayList<>();
+        for (Catalog.Entry e : catalog) {
+            JSONObject t = e.json.optJSONObject("theme");
+            if (t == null || Theme.of(e.json) == null) continue;
+            synchronized (this) {
+                JSONObject s = scene(e.id);
+                JSONObject old = s != null ? s.optJSONObject("theme") : null;
+                if (s == null || (old != null && old.toString().equals(t.toString()))) continue;
+                try {
+                    s.put("theme", t);
+                    writeText(new File(lookDir(e.id), "scene.json"), s.toString(2));
+                    done.add(e.id);
+                } catch (IOException | JSONException x) {
+                    Log.w(TAG, "can't update the theme of " + e.id + ": " + x.getMessage());
+                }
+            }
+        }
+        if (!done.isEmpty()) {
+            Log.i(TAG, "themes from the catalog for " + done);
+            changed();
+        }
+        return done;
+    }
+
     File poster(String look) {
         File f = new File(lookDir(look), "poster.jpg");
         return f.exists() ? f : null;
@@ -325,6 +356,9 @@ final class Store {
         v.orientation = orientation;
         v.width = e.optInt("width");
         v.height = e.optInt("height");
+        v.theme = Theme.of(scene);
+        JSONObject t = scene.optJSONObject("theme");
+        v.themeJson = t != null ? t.toString() : null;
         JSONArray f = e.optJSONArray("focus");
         if (f != null && f.length() == 2) {
             v.focusX = clamp01((float) f.optDouble(0, 0.5));

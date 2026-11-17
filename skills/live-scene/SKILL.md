@@ -11,6 +11,7 @@ format is in `sdk/FORMAT.md`; read it if anything below is unclear.
 
 ```
 livescenes pack SRC -o packs/<id> --id <id> --title "…" [options]   make a pack
+livescenes theme packs/<id> --set '#..,#..,#..' [--style S]          its Android theme
 livescenes check packs/<id>                                         validate it
 livescenes add packs/<id> [--android]                               install it
 livescenes catalog packs/* -o release/                              publish (optional)
@@ -59,25 +60,53 @@ livescenes pack SRC -o packs/<id> --id <id> --title "Title" --author "Name" --li
 livescenes check packs/<id>
 ```
 
-- `check` must print no FAIL. A seam failure means the end doesn't flow into the start: move `--start`,
-  change `--length`, or lengthen `--fade`.
+- `check` must print no FAIL (the theme one goes away in step 5). A seam failure means the end doesn't flow
+  into the start: move `--start`, change `--length`, or lengthen `--fade`.
 - Then look at the result yourself: extract the last and first frames of each mp4 and view them, plus a
   frame mid-crossfade (`length - fade/2` seconds), and view `poster.jpg`. Look for ghosting, cut-off
   subjects and banding.
 - Sizes: aim for ≤ 30 MB landscape and ≤ 15 MB portrait. Lower quality with a higher `--crf` (default 24;
   +2 ≈ 30 % smaller); grain and noise cost the most.
 
-## 5. Install
+## 5. Design its Android theme (every look ships one)
+
+The Android app turns the phone's Material You theme to the look's own theme while it plays. Design it by
+eye; it is part of the look, not an afterthought.
+
+- Look at the poster and a few frames (portrait too: that's what phones show). Name the look's one
+  recognisable color: the light in the room, the glowing koi, the logo, the neon. That's `primary`.
+- Android seeds the whole palette from `primary` and makes its own tones of it (pastel accents on dark
+  backgrounds), so the **hue** is what survives, not the exact shade. Avoid muddy averages of the frame and
+  greys: a seed without color becomes Android blue. Keep it apart from the other looks' hues.
+- `secondary`, `tertiary`: two more colors from the look, offered as alternatives in Wallpaper & style.
+- `--light` only if the look is light (dark text suits it); looks are dark by default.
+- `--style` (optional, used only where the user lets the app change the system style): `MONOCHROMATIC` for
+  black-and-white art, `VIBRANT` for saturated looks, `TONAL_SPOT` for calm ones; leave it out to keep the
+  user's style.
+
+```
+livescenes theme packs/<id>                                        # a suggestion from the poster
+livescenes theme packs/<id> --set '#e2441f,#a3283a,#8c7b72' --style VIBRANT
+```
+
+If the look's source lives in a repository (like `scenes-src/<id>/` in plasma-live-wallpapers), keep the
+theme next to it as `theme.json` and set it with `--set scenes-src/<id>/theme.json`. Re-packing keeps the
+pack's theme. If you have an Android phone with the app, check the result there (the theme follows at the
+next screen off). `check` fails until the look has a theme.
+
+## 6. Install
 
 - This desktop: `livescenes add packs/<id>`. It appears as a profile in the Live Scenes settings
   (Plasma: Configure Desktop and Wallpaper; macOS: the menu bar app).
 - Android over adb (USB or wireless debugging): `livescenes add packs/<id> --android`, then open the Live
   Scenes app once to import it. Set `$ADB` if adb isn't on PATH or in `~/Android/Sdk`.
 
-Report what you made: the pack path, loop length, sizes, focus points, and anything you weren't sure about.
+Report what you made: the pack path, loop length, sizes, focus points, the theme (colors and the idea), and
+anything you weren't sure about.
 
-## 6. Publish (only when asked)
+## 7. Publish (only when asked)
 
-`livescenes catalog packs/* -o release/` writes flat assets and `catalog.json` with relative URLs. Upload
+`livescenes catalog packs/* -o release/` writes flat assets and `catalog.json` with relative URLs (themes
+included; it warns about a pack without one). Upload
 the whole folder as one release or to any static host; the apps take a catalog URL override. Uploading
 is public: confirm with the user before running `gh release` or any upload.

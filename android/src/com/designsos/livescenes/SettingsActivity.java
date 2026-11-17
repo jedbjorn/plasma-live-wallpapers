@@ -2,7 +2,6 @@ package com.designsos.livescenes;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.WallpaperInfo;
 import android.app.WallpaperManager;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
@@ -43,7 +42,7 @@ import static com.designsos.livescenes.Ui.dp;
 public class SettingsActivity extends Activity {
     Prefs prefs;
     Store store;
-    LinearLayout box, statusBox, updateBox, profilesBox, catalogBox, batteryBox;
+    LinearLayout box, statusBox, updateBox, profilesBox, catalogBox, batteryBox, themeBox;
     TextView catalogStatus, updateNote;
     Update.Info update;          // a newer release, if the last check found one
     String updateStatus;         // what the update is doing, or why it failed
@@ -51,6 +50,9 @@ public class SettingsActivity extends Activity {
     String orientation;
     List<Catalog.Entry> catalog;
     int catalogRequest;
+    /** The last catalog loaded, shown at once when the screen is recreated (a theme change does that). */
+    static List<Catalog.Entry> lastCatalog;
+    static String lastCatalogUrl;
     final Runnable onStore = () -> { renderProfiles(); renderCatalog(); };   // cards show what's saved
 
     @Override
@@ -60,6 +62,7 @@ public class SettingsActivity extends Activity {
         store = Store.get(this);
         orientation = Store.deviceOrientation(this);
         ScrollView scroll = new ScrollView(this);
+        scroll.setId(android.R.id.list);   // an id keeps the scroll position when a theme change recreates the screen
         scroll.setClipToPadding(false);
         scroll.setOnApplyWindowInsetsListener((v, in) -> {
             v.setPadding(in.getSystemWindowInsetLeft(), in.getSystemWindowInsetTop(),
@@ -95,9 +98,15 @@ public class SettingsActivity extends Activity {
         note("Below this battery level the wallpaper shows a still image and the video player is shut down, to save battery. "
                 + "It plays again while charging or once the battery is back above the level.");
 
+        heading("Theme");
+        themeBox = column();
+        box.addView(themeBox, Ui.wide(0));
+        renderTheme();
+
         renderAdvanced();
         store.addListener(onStore);
         renderProfiles();
+        if (prefs.catalogUrl().equals(lastCatalogUrl)) { catalog = lastCatalog; renderCatalog(); }
         loadCatalog();
 
         IntentFilter status = new IntentFilter(Update.ACTION_STATUS);
@@ -127,14 +136,10 @@ public class SettingsActivity extends Activity {
 
     // ---- wallpaper status
 
-    boolean isWallpaper() {
-        WallpaperInfo info = WallpaperManager.getInstance(this).getWallpaperInfo();
-        return info != null && getPackageName().equals(info.getPackageName());
-    }
-
     void renderStatus() {
         statusBox.removeAllViews();
-        if (isWallpaper()) return;
+        if (LiveWallpaperService.isWallpaper(this)) return;
+        Ui.IO.execute(() -> Theme.restore(this, prefs));   // the theme is only ours while we're the wallpaper
         Button set = new Button(this);
         set.setText("Set as wallpaper");
         set.setOnClickListener(v -> setWallpaper());
@@ -384,7 +389,13 @@ public class SettingsActivity extends Activity {
         Ui.NET.execute(() -> {
             try {
                 List<Catalog.Entry> list = Catalog.fetch(url, orientation);
-                runOnUiThread(() -> { if (req == catalogRequest) { catalog = list; renderCatalog(); } });
+                store.syncThemes(list);
+                runOnUiThread(() -> {
+                    if (req != catalogRequest) return;
+                    catalog = lastCatalog = list;
+                    lastCatalogUrl = url;
+                    renderCatalog();
+                });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     if (req != catalogRequest) return;
@@ -556,6 +567,49 @@ public class SettingsActivity extends Activity {
         }
     }
 
+    // ---- theme
+
+    void renderTheme() {
+        themeBox.removeAllViews();
+        Switch match = new Switch(this);
+        match.setText("Match the phone's theme to the look");
+        match.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        match.setChecked(prefs.matchTheme());
+        match.setOnCheckedChangeListener((b, on) -> {
+            prefs.p.edit().putBoolean(Prefs.MATCH_THEME, on).apply();
+            if (!on) Ui.IO.execute(() -> Theme.restore(this, prefs));
+            renderTheme();
+        });
+        themeBox.addView(match, Ui.wide(dp(this, 4)));
+        boolean now = Theme.canApplyNow(this);
+        TextView about = Ui.text(this, "Every look comes with colors made for it, and Android builds its theme (Material You) "
+                + "from them. Off: Android picks the colors from the look's picture. "
+                + (now && prefs.themeNow() && prefs.matchTheme() ? ""
+                        : "Android changes the theme for a new look the next time the screen turns off."), 14);
+        about.setAlpha(0.7f);
+        themeBox.addView(about, Ui.wide(dp(this, 4)));
+        // with WRITE_SECURE_SETTINGS (granted over adb) the theme can change at once; shown while the option can
+        // still be turned off too, so the user's setting can always be put back
+        if (now || prefs.themeNow()) {
+            Switch at = new Switch(this);
+            at.setText("Change it at once, in the look's color style");
+            at.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            at.setChecked(prefs.themeNow());
+            at.setEnabled(prefs.matchTheme() && (now || prefs.themeNow()));
+            at.setOnCheckedChangeListener((b, on) -> {
+                prefs.p.edit().putBoolean(Prefs.THEME_NOW, on).apply();
+                if (!on) Ui.IO.execute(() -> Theme.restore(this, prefs));
+                renderTheme();
+            });
+            themeBox.addView(at, Ui.wide(dp(this, 12)));
+            TextView how = Ui.text(this, now ? "Writes the theme to the system setting that Wallpaper & style uses. "
+                    + "Turning this off puts your own setting back."
+                    : "The permission for this was taken away: grant it again to put your own setting back.", 14);
+            how.setAlpha(0.7f);
+            themeBox.addView(how, Ui.wide(dp(this, 4)));
+        }
+    }
+
     // ---- advanced + developer
 
     void renderAdvanced() {
@@ -607,6 +661,10 @@ public class SettingsActivity extends Activity {
             box.addView(awake, Ui.wide(dp(this, 4)));
             note("Works while Live Scenes is your wallpaper. The power button still turns the screen off. "
                     + "For plugged in, use Developer options > Stay awake.");
+            if (!Theme.canApplyNow(this)) {
+                note("To change the theme at once when the look changes, grant: adb shell pm grant " + getPackageName()
+                        + " android.permission.WRITE_SECURE_SETTINGS");
+            }
         }
     }
 

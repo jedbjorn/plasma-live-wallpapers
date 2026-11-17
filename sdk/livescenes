@@ -113,6 +113,124 @@ def warn(msg):
     print(f"warning: {msg}", file=sys.stderr, flush=True)
 
 
+# --------------------------------------------------------------------------------------------- themes
+
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+# Monet styles Android applies from the system theme setting (Android 17 on a Pixel takes these; CONTENT and
+# FIDELITY fall back to TONAL_SPOT there)
+STYLES = ("TONAL_SPOT", "VIBRANT", "EXPRESSIVE", "SPRITZ", "RAINBOW", "FRUIT_SALAD", "MONOCHROMATIC")
+
+
+def rgb(hexcolor):
+    v = int(hexcolor[1:], 16)
+    return (v >> 16) & 255, (v >> 8) & 255, v & 255
+
+
+def lab_chroma(hexcolor):
+    """CIELAB chroma of an sRGB color: a stand-in for Material's HCT chroma (Monet ignores seeds below 5)."""
+    def lin(c):
+        c /= 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(c) for c in rgb(hexcolor))
+    x, y, z = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, 0.2126 * r + 0.7152 * g + 0.0722 * b, \
+        (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    f = lambda t: t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    a, bb = 500 * (f(x) - f(y)), 200 * (f(y) - f(z))
+    return (a * a + bb * bb) ** 0.5
+
+
+def theme_problems(t):
+    """What is wrong with a scene's theme (sdk/FORMAT.md), as a list of strings; empty if it is fine."""
+    if not isinstance(t, dict):
+        return ["theme must be an object"]
+    out = []
+    for k in ("primary", "secondary", "tertiary"):
+        if k in t or k == "primary":
+            if not (isinstance(t.get(k), str) and HEX_RE.match(t[k])):
+                out.append(f"theme.{k} must be a color like #4f8a8b, got {t.get(k)!r}")
+    if "dark" in t and not isinstance(t["dark"], bool):
+        out.append("theme.dark must be true or false")
+    if "style" in t and t["style"] not in STYLES:
+        out.append(f"theme.style must be one of {', '.join(STYLES)}, got {t['style']!r}")
+    return out
+
+
+def parse_theme(value, light=False, style=None):
+    """A theme from --theme: '#primary[,#secondary[,#tertiary]]', or a JSON file holding a theme (or a scene.json)."""
+    if Path(value).is_file():
+        data = json.loads(Path(value).read_text(encoding="utf-8"))
+        t = dict(data.get("theme", data)) if isinstance(data, dict) else data
+    else:
+        colors = [c.strip() for c in value.split(",") if c.strip()]
+        if not 1 <= len(colors) <= 3:
+            raise Fail(f"--theme takes one to three colors (#rrggbb,...) or a JSON file, got {value!r}")
+        t = dict(zip(("primary", "secondary", "tertiary"), colors))
+        t["dark"] = True
+    if light:
+        t["dark"] = False
+    if style:
+        t["style"] = style.upper()
+    for k in ("primary", "secondary", "tertiary"):
+        if isinstance(t.get(k), str):
+            t[k] = t[k].lower()
+    problems = theme_problems(t)
+    if problems:
+        raise Fail("; ".join(problems))
+    return t
+
+
+def suggest_theme(poster):
+    """A starting point for a look's theme from its poster: its most present vivid hues, made bright enough to read
+    as accents. Only a suggestion: pick the final colors by eye (see the skill)."""
+    w, h = 64, 36
+    p = run([tool("ffmpeg"), "-v", "error", "-i", str(poster), "-vf", f"scale={w}:{h}:flags=area", "-f", "rawvideo",
+             "-pix_fmt", "rgb24", "-"], capture=True)
+    data = p.stdout
+    import colorsys
+    bins, lum = {}, 0.0
+    for i in range(0, len(data) - 2, 3):
+        r, g, b = data[i] / 255, data[i + 1] / 255, data[i + 2] / 255
+        lum += 0.2126 * r + 0.7152 * g + 0.0722 * b
+        hh, ss, vv = colorsys.rgb_to_hsv(r, g, b)
+        if ss < 0.25 or vv < 0.12:
+            continue
+        k = int(hh * 24) % 24
+        wt = ss * vv
+        acc = bins.setdefault(k, [0.0, 0.0, 0.0, 0.0])
+        acc[0] += wt
+        acc[1] += r * wt
+        acc[2] += g * wt
+        acc[3] += b * wt
+    dark = lum / (len(data) // 3) < 0.5
+    picked = []
+    for k, acc in sorted(bins.items(), key=lambda kv: -kv[1][0]):
+        if acc[0] < 0.4 or any(min((k - q) % 24, (q - k) % 24) < 3 for q in picked):
+            continue
+        picked.append(k)
+        if len(picked) == 3:
+            break
+    colors = []
+    for k in picked:
+        acc = bins[k]
+        hh, ss, vv = colorsys.rgb_to_hsv(acc[1] / acc[0], acc[2] / acc[0], acc[3] / acc[0])
+        r, g, b = colorsys.hsv_to_rgb(hh, max(ss, 0.55), max(vv, 0.75))
+        colors.append("#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255)))
+    if not colors:   # black and white: a cool grey that Monet still reads as a color, and a grey style
+        return {"primary": "#8a94a6", "dark": dark, "style": "MONOCHROMATIC"}
+    t = dict(zip(("primary", "secondary", "tertiary"), colors))
+    t["dark"] = dark
+    return t
+
+
+def theme_line(t):
+    colors = ",".join(t[k] for k in ("primary", "secondary", "tertiary") if k in t)
+    return f"{colors}  {'dark' if t.get('dark', True) else 'light'}" + (f"  style {t['style']}" if "style" in t else "")
+
+
+THEME_HOWTO = ("design it by eye (see skills/live-scene/SKILL.md), then: livescenes theme {pack} --set "
+               "'#primary,#secondary,#tertiary' [--light] [--style STYLE]")
+
+
 # --------------------------------------------------------------------------------------------- source probing
 
 class Source:
@@ -244,6 +362,15 @@ def cmd_pack(a):
     out = Path(a.output)
     if out.name != a.id:
         warn(f"the pack folder should be named after its id ({a.id}), not {out.name}")
+    theme = parse_theme(a.theme, a.theme_light, a.theme_style) if a.theme else None
+    if theme is None and (out / "scene.json").is_file():   # re-packing: keep the theme designed for it
+        try:
+            old = json.loads((out / "scene.json").read_text(encoding="utf-8")).get("theme")
+        except ValueError:
+            old = None
+        if old and not theme_problems(old):
+            theme = old
+            info(f"keeping the theme of {out}/scene.json: {theme_line(theme)}")
     src = Source(a.src)
     psrc = Source(a.portrait) if a.portrait else None
 
@@ -303,11 +430,19 @@ def cmd_pack(a):
                                    "bytes": f.stat().st_size, "sha256": sha256(f), "focus": list(foc)}
         if orient == "portrait" and a.portrait_rotate:
             scene["videos"][orient]["rotate"] = ROTATIONS[a.portrait_rotate][0]
+    if theme:
+        scene["theme"] = theme
     write_json(out / "scene.json", scene)
     info(f"\npack written: {out}/  (loop {scene['loop']} s)")
     for orient, v in scene["videos"].items():
         info(f"  {v['file']:<14} {v['width']}x{v['height']}  {human(v['bytes'])}  focus {v['focus']}")
-    info(f"  poster.jpg\nnext: livescenes check {out}")
+    info("  poster.jpg")
+    if theme:
+        info(f"  theme {theme_line(theme)}")
+    else:
+        warn(f"no Android theme yet. A start from the poster: {theme_line(suggest_theme(out / 'poster.jpg'))}\n  "
+             + THEME_HOWTO.format(pack=out))
+    info(f"next: livescenes check {out}")
 
 
 # --------------------------------------------------------------------------------------------- check
@@ -494,6 +629,15 @@ def cmd_check(a):
             if c.ok(isinstance(v, dict) and all(k in v for k in ("file", "width", "height", "fps", "bytes", "sha256")),
                     f"{orient}: has file, width, height, fps, bytes, sha256"):
                 check_video(c, pack, orient, v, loop)
+    if "theme" in scene:
+        problems = theme_problems(scene["theme"])
+        if c.ok(not problems, "theme is valid", "; ".join(problems)):
+            t = scene["theme"]
+            if lab_chroma(t["primary"]) < 8:
+                c.warn(f"theme.primary {t['primary']} is nearly grey: Android ignores seeds without color and falls "
+                       "back to blue (give it a hint of hue, and style MONOCHROMATIC for a grey look)")
+    else:
+        c.ok(False, "theme is set (every look ships an Android theme)", THEME_HOWTO.format(pack=pack))
     poster = pack / "poster.jpg"
     if c.ok(poster.is_file(), "poster.jpg exists"):
         j = ffprobe_json(poster)
@@ -625,6 +769,32 @@ def cmd_add(a):
     info(f"installed {sid} ({orient}) in {look}/")
 
 
+# --------------------------------------------------------------------------------------------- theme
+
+def cmd_theme(a):
+    pack = Path(a.packdir)
+    scene = load_scene(pack)
+    if a.set:
+        scene["theme"] = parse_theme(a.set, a.light, a.style)
+        write_json(pack / "scene.json", scene)
+        info(f"{scene['id']}: theme {theme_line(scene['theme'])}")
+        return 0
+    if a.light or a.style:
+        raise Fail("--light and --style go with --set")
+    if scene.get("theme"):
+        info(f"{scene['id']}: theme {theme_line(scene['theme'])}")
+        problems = theme_problems(scene["theme"])
+        for problem in problems:
+            warn(problem)
+        return 1 if problems else 0
+    poster = pack / "poster.jpg"
+    if not poster.is_file():
+        raise Fail(f"{pack}: no theme and no poster.jpg to suggest one from")
+    info(f"{scene['id']}: no theme yet. A start from the poster: {theme_line(suggest_theme(poster))}\n"
+         + THEME_HOWTO.format(pack=pack))
+    return 1
+
+
 # --------------------------------------------------------------------------------------------- catalog
 
 def cmd_catalog(a):
@@ -642,6 +812,10 @@ def cmd_catalog(a):
             if k in scene:
                 entry[k] = scene[k]
         entry["loop"] = scene.get("loop")
+        if scene.get("theme") and not theme_problems(scene["theme"]):
+            entry["theme"] = scene["theme"]
+        else:
+            warn(f"{sid}: NO ANDROID THEME. Phones fall back to the poster's colors. " + THEME_HOWTO.format(pack=pack))
         if (pack / "poster.jpg").is_file():
             copy_asset(pack / "poster.jpg", rel / f"{sid}-poster.jpg")
             entry["poster"] = f"{sid}-poster.jpg"
@@ -678,7 +852,8 @@ def copy_asset(src, dst):
 HELP = __doc__ + """
 typical session:
   livescenes pack render.mov -o packs/aurora --id aurora --title "Aurora" --author "Me" --license CC-BY-4.0
-  livescenes check packs/aurora
+  livescenes check packs/aurora          # fails until the look has its Android theme:
+  livescenes theme packs/aurora --set '#5b8def,#f2c14e,#e85d75'
   livescenes add packs/aurora            # this desktop
   livescenes add packs/aurora --android  # a phone over adb
   livescenes catalog packs/* -o release/
@@ -764,6 +939,14 @@ def build_parser():
                    help="extra x265 parameters, e.g. aq-strength=1.3:psy-rd=2 (keyframe and GOP settings are fixed)")
     p.add_argument("--poster-time", type=float, default=0.0, metavar="S",
                    help="moment of the loop used for poster.jpg, in seconds (default 0)")
+    p.add_argument("--theme", metavar="COLORS|FILE",
+                   help="the look's Android theme: '#primary,#secondary,#tertiary' (primary seeds the phone's "
+                        "Material You colors), or a JSON file with a theme. Default: the theme already in "
+                        "OUTDIR/scene.json; without one, a suggestion from the poster is printed")
+    p.add_argument("--theme-light", action="store_true",
+                   help="with --theme: the look is light (dark text suits it); looks are dark by default")
+    p.add_argument("--theme-style", choices=STYLES, metavar="STYLE",
+                   help="with --theme: the Material You style that suits the look (" + ", ".join(STYLES) + ")")
 
     p = sub.add_parser("check", help="validate a look pack: format, encoding, checksums, loop seam",
                        description="Validate a look pack against sdk/FORMAT.md: scene.json fields, video codec, "
@@ -772,6 +955,23 @@ def build_parser():
                        "frame) is no bigger a change than the motion around it. Prints PASS/FAIL lines and "
                        "exits non-zero if anything fails.")
     p.add_argument("packdir", metavar="PACKDIR")
+
+    p = sub.add_parser("theme", help="show, suggest or set a pack's Android theme (no re-encoding)",
+                       description="Every look ships an Android theme: colors chosen by hand so the phone's Material "
+                       "You theme matches the look (sdk/FORMAT.md). Without --set: shows the pack's theme, or a "
+                       "suggestion from its poster. With --set: writes the theme into scene.json (the videos and "
+                       "the poster are not touched). The first color seeds the palette; Android makes tones of it, "
+                       "so it is the hue that counts.",
+                       epilog="examples:\n  livescenes theme packs/embers\n"
+                       "  livescenes theme packs/embers --set '#c0174a,#5e1a5c,#ff7a30'\n"
+                       "  livescenes theme packs/sketch --set '#8a94a6,#d7d2c4' --style MONOCHROMATIC\n"
+                       "  livescenes theme packs/hall --set scenes-src/hall/theme.json",
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("packdir", metavar="PACKDIR")
+    p.add_argument("--set", metavar="COLORS|FILE",
+                   help="'#primary[,#secondary[,#tertiary]]', or a JSON file with a theme (or a scene.json)")
+    p.add_argument("--light", action="store_true", help="the look is light (dark text suits it)")
+    p.add_argument("--style", choices=STYLES, metavar="STYLE", help="Material You style: " + ", ".join(STYLES))
 
     p = sub.add_parser("add", help="install a pack here, or push it to an Android phone",
                        description="Install a look pack on this computer: its landscape video, poster and "
@@ -805,7 +1005,8 @@ def main(argv=None):
         ap.print_help()
         return 2
     try:
-        return {"pack": cmd_pack, "check": cmd_check, "add": cmd_add, "catalog": cmd_catalog}[a.cmd](a) or 0
+        return {"pack": cmd_pack, "check": cmd_check, "theme": cmd_theme, "add": cmd_add,
+                "catalog": cmd_catalog}[a.cmd](a) or 0
     except Fail as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

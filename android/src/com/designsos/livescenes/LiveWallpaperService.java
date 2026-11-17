@@ -1,6 +1,8 @@
 package com.designsos.livescenes;
 
 import android.app.WallpaperColors;
+import android.app.WallpaperInfo;
+import android.app.WallpaperManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -20,6 +22,7 @@ import android.view.SurfaceHolder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Live Scenes for Android: plays the active profile's look, a seamlessly looping video (sdk/FORMAT.md),
@@ -27,6 +30,7 @@ import java.util.List;
  * Decoding is in hardware straight to the wallpaper's surface (see {@link VideoLoop}); hidden = paused.
  * On low battery (below the level set in the app, and not charging) nothing plays: the player is released and
  * one frame of the look is drawn as a still image, so no decoder, thread or GL is left running.
+ * The system theme gets the look's own theme (see {@link Theme}), or the poster's colors.
  */
 public class LiveWallpaperService extends WallpaperService {
     static final String TAG = "LiveScenes";
@@ -47,6 +51,7 @@ public class LiveWallpaperService extends WallpaperService {
     final SharedPreferences.OnSharedPreferenceChangeListener prefListener = (sp, key) -> {
         if (Prefs.DEV_AWAKE.equals(key)) updateAwake();
         else if (Prefs.FREEZE_BELOW.equals(key)) updateFrozen();
+        else if (Prefs.MATCH_THEME.equals(key) || Prefs.THEME_NOW.equals(key)) themeChanged();
     };
 
     // ---- low battery: a still frame instead of the video
@@ -66,6 +71,9 @@ public class LiveWallpaperService extends WallpaperService {
         charging = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
         updateFrozen();
     }
+
+    /** The theme options changed: every engine gives the system its colors again. */
+    void themeChanged() { for (VideoEngine e : engines) e.themeChanged(); }
 
     void updateFrozen() {
         int below = prefs.freezeBelow();
@@ -89,11 +97,19 @@ public class LiveWallpaperService extends WallpaperService {
 
     @Override
     public void onDestroy() {
+        // another wallpaper was set: the theme setting goes back to the user's (not on a mere rebind)
+        if (!isWallpaper(this)) Theme.restore(this, prefs);
         unregisterReceiver(batteryReceiver);
         getContentResolver().unregisterContentObserver(adbWifiObserver);
         prefs.p.unregisterOnSharedPreferenceChangeListener(prefListener);
         if (awakeLock != null && awakeLock.isHeld()) awakeLock.release();
         super.onDestroy();
+    }
+
+    /** Whether Live Scenes is the (home screen's) wallpaper. */
+    static boolean isWallpaper(Context c) {
+        WallpaperInfo info = WallpaperManager.getInstance(c).getWallpaperInfo();
+        return info != null && c.getPackageName().equals(info.getPackageName());
     }
 
     static boolean wirelessDebugging(Context c) {
@@ -123,7 +139,7 @@ public class LiveWallpaperService extends WallpaperService {
         VideoLoop player;
         Store.Video video;
         int w, h;
-        String colorsLook;
+        String colorsKey;      // the look and theme the colors are for
         WallpaperColors colors;
         Bitmap still;          // low battery: the frame on screen instead of the video
         int stillRequest;
@@ -201,6 +217,11 @@ public class LiveWallpaperService extends WallpaperService {
                     if (player != null) player.setSpeed(v.speed);
                     Log.i(TAG, "speed " + v.speed + "x");
                 }
+                if (!Objects.equals(v.themeJson, video.themeJson)) {   // the catalog brought a theme for it
+                    video.theme = v.theme;
+                    video.themeJson = v.themeJson;
+                    updateColors();
+                }
                 return;
             }
             start(v);
@@ -214,11 +235,22 @@ public class LiveWallpaperService extends WallpaperService {
                     + (frozen ? " as a still (low battery)" : " at " + v.speed + "x"));
             if (frozen) showStill(v);
             else play(v, !isVisible());
-            if (!v.look.equals(colorsLook)) {
-                colorsLook = v.look;
-                colors = null;
-                notifyColorsChanged();
-            }
+            updateColors();
+        }
+
+        /** Tells the system about new colors if the look or its theme changed. */
+        void updateColors() {
+            String key = video.look + ":" + video.themeJson;
+            if (key.equals(colorsKey)) return;
+            colorsKey = key;
+            themeChanged();
+        }
+
+        /** The colors to give the system changed (another look or theme, or the theme setting). */
+        void themeChanged() {
+            colors = null;
+            notifyColorsChanged();
+            if (!isPreview() && video != null) Theme.applyNow(LiveWallpaperService.this, video.theme);
         }
 
         void play(Store.Video v, boolean paused) {
@@ -265,12 +297,21 @@ public class LiveWallpaperService extends WallpaperService {
             stillRequest++;
         }
 
-        /** Colors for the system theme, from the look's poster. */
+        /**
+         * Colors for the system theme: the look's own theme if it has one and the user wants it, else the poster's.
+         * (Android applies new colors of a live wallpaper only at the next screen off, unless {@link Theme#applyNow}.)
+         */
         @Override
         public WallpaperColors onComputeColors() {
             if (colors == null && video != null) {
-                Bitmap b = Store.posterBitmap(LiveWallpaperService.this, video, 256);
-                if (b != null) colors = WallpaperColors.fromBitmap(b);
+                if (prefs.matchTheme() && video.theme != null) {
+                    colors = video.theme.colors();
+                } else {
+                    Bitmap b = Store.posterBitmap(LiveWallpaperService.this, video, 256);
+                    if (b != null) colors = WallpaperColors.fromBitmap(b);
+                }
+                Log.i(TAG, "colors for " + video.look + (prefs.matchTheme() && video.theme != null ? " (its theme)" : " (poster)")
+                        + ": " + colors);
             }
             return colors;
         }

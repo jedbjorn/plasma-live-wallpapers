@@ -33,7 +33,9 @@ For distribution it is zipped as `<id>.zip` with the folder at the zip root.
                    "bytes": 12345678, "sha256": "…", "focus": [0.5, 0.5] },
     "portrait":  { "file": "portrait.mp4",  "width": 1080, "height": 2400, "fps": 30,
                    "bytes": 2345678,  "sha256": "…", "focus": [0.5, 0.5] }
-  }
+  },
+  "theme": { "primary": "#6f8db0", "secondary": "#9aa6b2", "tertiary": "#e0a458", "dark": true,
+             "style": "TONAL_SPOT" }
 }
 ```
 
@@ -43,7 +45,34 @@ For distribution it is zipped as `<id>.zip` with the folder at the zip root.
 - `rotate` (optional, informational): `90` or `-90` when the video is a landscape picture turned 90°
   clockwise or counter-clockwise to fill a portrait screen (it reads upright with the phone turned
   sideways). Players ignore it and play the video as it is. Copied into the catalog entry too.
+- `theme` (optional for readers; the SDK requires it for new looks): the look's Android theme, colors chosen
+  by hand so the phone's Material You theme matches the look. See [Themes](#themes). Copied into the catalog entry.
 - Unknown keys must be ignored by readers. `format` changes only for incompatible changes.
+
+### Themes
+
+```json
+"theme": { "primary": "#e2441f", "secondary": "#a3283a", "tertiary": "#8c7b72", "dark": true, "style": "VIBRANT" }
+```
+
+- `primary` (required in a theme), `secondary`, `tertiary` (optional): `#rrggbb`. Android seeds its whole
+  palette from `primary` and makes its own tones of it, so its hue is what shows; pick it on purpose, with
+  some color in it (Android replaces a grey seed with blue). `secondary` and `tertiary` are offered as
+  alternatives in Android's Wallpaper & style.
+- `dark` (default `true`): the look is dark, light text and a dark theme suit it. `false`: a light look
+  (dark text on it).
+- `style` (optional): the Material You style that suits the look: `TONAL_SPOT`, `VIBRANT`, `EXPRESSIVE`,
+  `SPRITZ`, `RAINBOW`, `FRUIT_SALAD` or `MONOCHROMATIC` (grey, for black-and-white looks). Android only uses
+  it where the user lets the app change the system theme setting (below); otherwise the user's style stays.
+- A look without a theme, or a player that ignores themes, gets colors from the poster as before. Players
+  other than Android ignore it for now.
+- Android: "Match the phone's theme to the look" (on by default) gives the system the theme's colors instead
+  of the poster's. Android applies a live wallpaper's new colors the next time the screen turns off (SystemUI
+  accepts one color change per wallpaper set, then defers them). If the user grants `WRITE_SECURE_SETTINGS`
+  over adb, "Change it at once" writes `system_palette` (= `primary`) and `theme_style` into
+  `Settings.Secure.theme_customization_overlay_packages`, the setting Wallpaper & style uses, so the theme
+  changes immediately; the user's value is saved first and put back when the option is turned off.
+- When the catalog loads, Android copies a changed `theme` of a saved look into its `scene.json` (no download).
 
 ### Videos
 
@@ -74,6 +103,7 @@ Every app must let the catalog URL be overridden (for testing and for third-part
       "id": "hall", "title": "Hall", "author": "designs-os.com", "license": "MIT",
       "description": "…", "loop": 84.0,
       "poster": "hall-poster.jpg",
+      "theme": { "primary": "#6f8db0", "secondary": "#9aa6b2", "tertiary": "#e0a458", "dark": true },
       "videos": {
         "landscape": { "url": "hall-landscape.mp4", "width": 2560, "height": 1440,
                        "bytes": 12345678, "sha256": "…", "focus": [0.5, 0.5] },
