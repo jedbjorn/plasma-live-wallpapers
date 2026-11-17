@@ -24,9 +24,12 @@ import java.nio.file.Files;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Little helpers for the programmatic views, and a background pool for files and network. */
+/** Little helpers for the programmatic views, and background threads for files and network. */
 final class Ui {
+    /** Files and posters. */
     static final ExecutorService IO = Executors.newFixedThreadPool(3);
+    /** The catalog and updates: never queued behind posters or imports. */
+    static final ExecutorService NET = Executors.newCachedThreadPool();
     static final LruCache<String, Bitmap> BITMAPS = new LruCache<String, Bitmap>(16 << 20) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
     };

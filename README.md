@@ -45,6 +45,7 @@ The looks were made once from animated web pages, which are kept in [`scenes-src
 - **Preview**: downloads only the video your device needs (landscape on desktops, portrait on phones) into the cache folder, checks its sha256 and plays it. Leave without saving and it is deleted.
 - **Profiles**: "Save as profile" keeps the video. A profile is a look plus a speed: **0.5×, 1× or 2×**. Several profiles can share one video; it is deleted when the last profile using it is deleted. The profile in use can't be deleted.
 - **Playback**: hardware HEVC decoding, a seamless loop, scaled to fill the screen and cropped around the look's focus point. Playback pauses while the wallpaper is hidden.
+- **Themes**: every look comes with an Android theme, colors picked by hand to match it. On Android the phone's Material You colors follow the look (see [Theme](#theme)).
 
 The formats (look pack, `scene.json`, catalog, storage folders) are specified in [`sdk/FORMAT.md`](sdk/FORMAT.md).
 
@@ -134,7 +135,21 @@ From a checkout, run `git pull && ./android/build.sh --install`. To uninstall, c
 
 The wallpaper decodes the video with the phone's hardware decoder straight onto the wallpaper surface; it doesn't use the GPU unless a look needs an off-centre crop of the other orientation. Measured with the Pixel 6's on-device power meters, the Hall look on the home screen costs about **3 mAh per hour** over a hidden wallpaper, against about 114 mAh per hour for the earlier version that rendered the scene live. It uses nothing while hidden.
 
-**Low battery:** below a battery level you choose in the app (Battery > Still frame below: Off, 20%, 30% or 50%; 50% by default), the wallpaper shows a still image of the look and shuts the video player down completely: no decoder, no thread, no GPU work after the one frame is drawn. It plays again while charging, or once the battery is back at or above that level.
+**Low battery:** below a battery level you choose in the app (Battery > Still frame below: 25%, 50% or 75%; 50% by default), the wallpaper shows a still image of the look and shuts the video player down completely: no decoder, no thread, no GPU work after the one frame is drawn. It plays again while charging, or once the battery is back at or above that level.
+
+### Theme
+
+Every look ships an Android theme: a hand-picked seed color (plus two alternatives, and a Material You style that suits it) that Android builds the phone's theme from. With **Theme > Match the phone's theme to the look** on (the default), the wallpaper gives Android the look's theme instead of colors picked from its picture; off, Android picks them from the picture as before.
+
+Android applies a live wallpaper's new colors **the next time the screen turns off**: SystemUI takes one color change after a wallpaper is set, and defers later ones until the screen is off, so switching profiles changes the theme after you next lock the phone. To change it at once, grant Live Scenes the right to write the system theme setting, once, over adb:
+
+```sh
+adb shell pm grant com.designsos.livescenes android.permission.WRITE_SECURE_SETTINGS
+```
+
+Then **Change it at once, in the look's color style** appears under Theme. It writes the look's seed color and style into the setting that Android's Wallpaper & style uses (`theme_customization_overlay_packages`); your own value is saved first and put back when you turn the option off, turn matching off, or choose another wallpaper. It leaves the setting alone while you use a preset color from Wallpaper & style. Turn the option off before revoking the permission (`adb shell pm revoke …`), or the app can't put your setting back.
+
+When the catalog loads, saved looks get their theme from it, without downloading the video again.
 
 ### Keeping the phone awake while developing
 
@@ -145,7 +160,7 @@ In both cases the power button still turns the screen off.
 
 ### Tested on Android
 
-Tested on a Pixel 6 with Android 17: playback and seamless looping, speed presets, live profile switching, the catalog, preview download with sha256 check, save and discard, import from the SDK, and the low-battery still (switching between still and playing on battery level and charger, simulated with `adb shell dumpsys battery`). Pausing with an app in front was measured at 0% CPU. Pausing with the screen off and playback on the lock screen use the same code path but have not been checked separately with the video version. Other devices have not been tested.
+Tested on a Pixel 6 with Android 17: playback and seamless looping, speed presets, live profile switching, the catalog, preview download with sha256 check, save and discard, import from the SDK, look themes (deferred to screen off by SystemUI; applied at once with the secure-settings permission, and the setting restored exactly), and the low-battery still (switching between still and playing on battery level and charger, simulated with `adb shell dumpsys battery`). Pausing with an app in front was measured at 0% CPU. Pausing with the screen off and playback on the lock screen use the same code path but have not been checked separately with the video version. Other devices have not been tested.
 
 ## macOS
 
@@ -176,13 +191,16 @@ The SDK is one script, [`sdk/livescenes`](sdk/livescenes) (Python 3 and ffmpeg w
 
 ```sh
 sdk/livescenes pack render.mov -o packs/aurora --id aurora --title "Aurora" --author "Me" --license CC-BY-4.0
-sdk/livescenes check packs/aurora              # format, encoding, checksums, loop seam
+sdk/livescenes check packs/aurora              # format, encoding, checksums, loop seam, theme
+sdk/livescenes theme packs/aurora --set '#5b8def,#f2c14e,#e85d75'   # its Android theme (no re-encoding)
 sdk/livescenes add packs/aurora                # this desktop (Plasma, macOS)
 sdk/livescenes add packs/aurora --android      # a phone over adb; open the app once to import it
 sdk/livescenes catalog packs/* -o release/     # assets + catalog.json to host your own catalog
 ```
 
 `pack` cuts the loop, makes it seamless with a crossfade, encodes the landscape (2560×1440) and portrait (1080×2400) videos around a focus point, and writes the poster and `scene.json`. For phones, a landscape picture can be cropped (`--portrait-focus`), supplied separately (`--portrait`), or turned sideways (`--portrait-rotate cw`). Run `sdk/livescenes <command> --help` for all options.
+
+**Every look ships an Android theme.** Design it by eye from the look: a primary color whose hue is recognisably the look's (Android makes its own tones of it, so a strong hue matters more than the exact shade), two alternatives, whether the look is dark, and optionally a style (`MONOCHROMATIC` for black-and-white looks). `sdk/livescenes theme PACK` suggests a start from the poster; `--set` writes it, `pack --theme` takes it too (and re-packing keeps the existing one). `check` fails without a theme, and `catalog` copies it into the catalog. The repository's looks keep theirs in `scenes-src/<id>/theme.json` (`sdk/livescenes theme build/packs/<id> --set scenes-src/<id>/theme.json`).
 
 ### Agent skill
 
@@ -198,7 +216,7 @@ The apps read the catalog and their own updates from the latest GitHub release, 
 
 1. Set the new version in `VERSION`, and the same in `package/metadata.json` (`Version`) and `package/contents/ui/Store.js` (`VERSION`); `release.sh` refuses to run if they differ.
 2. Build the update files: `./release.sh` writes `live-scenes-plasma-<version>.tar.gz`, `LiveScenes-<version>.apk` and `update.json` (described in [`sdk/FORMAT.md`](sdk/FORMAT.md)) into `build/release/`. `--no-android` leaves the APK out; phones are then not offered that release.
-3. Add the catalog to the same folder: `sdk/livescenes catalog build/packs/* -o build/release`.
+3. Add the catalog to the same folder: `sdk/livescenes catalog build/packs/* -o build/release`. Every pack needs its Android theme (`sdk/livescenes check` fails without one; `catalog` warns). A theme change alone is a look-only change: re-upload `catalog.json` (`gh release upload v<version> build/release/catalog.json --clobber`); phones copy the new theme into their saved looks when the catalog loads.
 4. Publish: `gh release create v<version> build/release/*`.
 
 **The Android signing key.** Android refuses an update that isn't signed with the same key as the installed app. Make one release key, once, and keep the keystore and its password somewhere safe and backed up; if it is lost, nobody can update in place any more:

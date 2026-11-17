@@ -124,7 +124,7 @@ public class PreviewActivity extends Activity implements TextureView.SurfaceText
         long bytes = entry.optJSONObject("videos").optJSONObject(orientation).optLong("bytes");
         String sha = entry.optJSONObject("videos").optJSONObject(orientation).optString("sha256", "");
         status.setText("Downloading " + Ui.size(this, bytes) + "…");
-        Ui.IO.execute(() -> {
+        Ui.NET.execute(() -> {
             try {
                 Catalog.download(videoUrl, file, sha, (done, total) -> runOnUiThread(() -> {
                     long all = total > 0 ? total : bytes;
