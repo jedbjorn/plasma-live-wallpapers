@@ -10,17 +10,22 @@
 // to dark and returning, staggered across the city. Each light blob has one random phase (lamps.png), so it
 // changes as a whole; large lit roofs only swell gently. A dimmed lamp never goes darker than the picture
 // without it. Twinkle cycles per loop: 24, 6, 4, 3, 2 and 1 (all whole numbers, so they divide the 20 s loop).
+// ?twinkle=weak|medium|strong (default strong) sets how far each lamp's gain moves from steady (uTw); the
+// three levels are the look's Twinkle setting, recorded as separate videos.
 // Avenue Flow: The static traffic on the main avenue is dimmed and replaced by moving cars:
 // red tail lights climbing to the horizon, white headlights coming down, with short light trails and
 // perspective-correct speed. Sparse traffic on three side streets and sparkles on the far-left freeway.
 // Loop 20 s: each lane is a row of cells whose car pattern repeats every k cells and travels exactly k cells per loop.
+const TWINKLE = { weak: 0.3, medium: 0.5, strong: 1.0 };   // weak ≈ the first, gentler twinkle (e81812e)
 Scene({
   title: 'Avenue Flow', L: 20,
   textures: { uImg: 'still.jpg', uLights: 'lights.png', uLamps: 'lamps.png' },
+  uniforms: { uTw: TWINKLE[new URLSearchParams(location.search).get('twinkle') || 'strong'] },
   desktop: { cx: 0.5, cy: 0.58, zoom: 1.12 },
   mobile: { cx: 0.514, cy: 0.61, zoom: 1.35 },
   frag: `
 uniform sampler2D uImg, uLights, uLamps; uniform float uLightsLod, uImgLod;
+uniform float uTw;                             // twinkle strength: 1 = strong; less pulls every gain towards 1
 const float YH = 1105.0;                       // horizon row, picture px
 const float WN = 1.0 / 2150.0, WF = 1.0 / 112.0;
 const int NP = 10;
@@ -141,6 +146,7 @@ void main(){
     // large lit roofs and facades stay calm: the swell and a little whole-blob breathing only
     float gRoof = 1.0 + 0.16 * swell + 0.14 * breathe;
     float gain = max(mix(gRoof, g, lampness), 0.0);
+    if(uTw < 1.0) gain = 1.0 + uTw * (gain - 1.0);   // dips, glints, shimmer and halos all scale with it
     // a dimmed lamp fades to the picture without that lamp (img - lt), never darker; peaks may overshoot
     col += lt * (gain < 1.0 ? gain - 1.0 : (gain - 1.0) * 2.2) * keep;
     // halos carry most of the visible change (the lamp cores are already near white)
