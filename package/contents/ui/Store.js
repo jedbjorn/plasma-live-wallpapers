@@ -4,6 +4,9 @@
 
 var DEFAULT_CATALOG = "https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest/download/catalog.json";
 var SPEEDS = [0.5, 1.0, 2.0];
+// The version of this code. plasmashell keeps it loaded after an upgrade, so it can differ from the
+// installed metadata.json until the shell restarts. release.sh checks it against the VERSION file.
+var VERSION = "2.1.0";
 
 function validId(id) {
     return typeof id === "string" && /^[a-z0-9-]{1,64}$/.test(id) && id[0] !== "-";
@@ -188,6 +191,35 @@ function resolveUrl(base, rel) {
         return m[1] + rel;
     var dir = m[2].replace(/[^\/]*$/, "");
     return m[1] + (dir || "/") + rel;
+}
+
+function validVersion(v) {
+    return typeof v === "string" && /^[0-9]+(\.[0-9]+){0,3}$/.test(v);
+}
+
+// < 0, 0 or > 0: version a is older than, the same as, or newer than b (numbers compared one by
+// one: "2.10.0" is newer than "2.9.1", "2.1" is the same as "2.1.0")
+function compareVersions(a, b) {
+    var x = String(a).split("."), y = String(b).split(".");
+    for (var i = 0; i < Math.max(x.length, y.length); i++) {
+        var d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0);
+        if (d !== 0)
+            return d;
+    }
+    return 0;
+}
+
+// Output of `helper.sh update-check` -> the Plasma plugin of the latest release (sdk/FORMAT.md):
+// { version, notes, url, sha256, bytes }, or null if that is not an update manifest with one
+function parseUpdate(text) {
+    var m = /^@@update (\S+)\n([\s\S]*)$/.exec(String(text));
+    var manifest = m ? parseJson(m[2]) : null;
+    var p = manifest ? manifest.plasma : null;
+    if (!p || !validVersion(manifest.version) || typeof p.url !== "string" || p.url === ""
+            || !/^[0-9a-f]{64}$/.test(p.sha256) || !(Number(p.bytes) > 0))
+        return null;
+    return { version: manifest.version, notes: /^https:\/\//.test(manifest.notes) ? manifest.notes : "",
+             url: resolveUrl(m[1], p.url), sha256: p.sha256, bytes: Number(p.bytes) };
 }
 
 function formatBytes(n) {

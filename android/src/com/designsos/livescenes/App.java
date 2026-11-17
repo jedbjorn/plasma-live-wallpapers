@@ -6,7 +6,10 @@ import android.util.Log;
 
 import java.io.File;
 
-/** Process start: clears previews left over from an earlier run (sdk/FORMAT.md) and settings of the old WebView version. */
+/**
+ * Process start: clears previews left over from an earlier run (sdk/FORMAT.md), the APK of an update
+ * (installed or abandoned by now), and settings of the old WebView version.
+ */
 public class App extends Application {
     @Override
     public void onCreate() {
@@ -16,6 +19,7 @@ public class App extends Application {
         long n = Store.treeBytes(preview);
         Store.deleteTree(preview);
         if (n > 0) Log.i(LiveWallpaperService.TAG, "cleared " + n + " bytes of old previews");
+        Store.deleteTree(Update.dir(this));
 
         SharedPreferences p = new Prefs(this).p;
         if (p.contains("scene") || p.contains("fps")) {

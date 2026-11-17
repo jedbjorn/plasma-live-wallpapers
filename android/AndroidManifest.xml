@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- versionCode and versionName are added by build.sh, from the VERSION file -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.designsos.livescenes"
-    android:versionCode="1"
-    android:versionName="1.0">
+    package="com.designsos.livescenes">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
     <uses-feature android:name="android.software.live_wallpaper" android:required="true" />
@@ -10,6 +9,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- only for the developer option "keep the screen on while wireless debugging is on" -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- in-app updates: hand a downloaded release APK to the system installer, which asks the user -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".App"

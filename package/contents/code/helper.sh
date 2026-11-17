@@ -15,6 +15,13 @@
 #   save <id> <scene json>         move a finished preview into looks/<id>/ with this scene.json
 #   write-profiles <json>          replace profiles.json (atomically)
 #   delete-look <id>               delete looks/<id>/
+#   version                        print the installed version (metadata.json)
+#   update-check [force]           print "@@update <manifest url>" and the update manifest of the latest
+#                                  release (sdk/FORMAT.md), or "@@error <message>"; it is downloaded at
+#                                  most once a day unless "force" is given
+#   update-install <url> <sha256> <bytes>
+#                                  download the plugin archive of a release, check it, and upgrade this
+#                                  package with kpackagetool6 (plasmashell is not restarted)
 #
 # Ids are untrusted (they come from catalogs): every id must match [a-z0-9-]+.
 #
@@ -23,10 +30,20 @@
 set -u
 STALE=20
 
+ID="com.designsos.livescenes"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/live-scenes"
-PREVIEW="${XDG_CACHE_HOME:-$HOME/.cache}/live-scenes/preview"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/live-scenes"
+PREVIEW="$CACHE/preview"
 HERE=$(cd "$(dirname "$0")" && pwd)
 BUNDLED="$HERE/../looks"
+# Updates come from the latest release, over https only. $LIVESCENES_UPDATE_URL points at another
+# manifest for testing (plasmashell would have to be started with it), and then allows http and file.
+UPDATE_URL="https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest/download/update.json"
+UPDATE_PROTO="=https"
+if [ -n "${LIVESCENES_UPDATE_URL:-}" ]; then
+    UPDATE_URL=$LIVESCENES_UPDATE_URL
+    UPDATE_PROTO="=http,https,file"
+fi
 
 die() {
     printf '{"ok": false, "error": "%s"}\n' "$1"
@@ -78,6 +95,16 @@ stop_worker() {
         fi
         rm -f "$1/pid"
     fi
+}
+
+# the "Version" in a package's metadata.json
+package_version() {
+    sed -n 's/.*"Version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$1/metadata.json" 2>/dev/null | head -n 1
+}
+
+# the last line of a tool's output, safe to put into a JSON string
+last_line() {
+    printf '%s' "$1" | tail -n 1 | tr -d '"\\' | cut -c1-200
 }
 
 # the video files present in a look folder: "landscape.mp4,portrait.mp4", or "-"
@@ -308,6 +335,69 @@ delete-look)
     valid_id "$id" || die "invalid id"
     rm -rf "${DATA:?}/looks/$id"
     echo '{"ok": true}'
+    ;;
+
+version)
+    package_version "$HERE/../.."
+    ;;
+
+update-check)
+    cached="$CACHE/update.json"
+    if [ "${1:-}" != force ] && [ -n "$(find "$cached" -mmin -1440 2>/dev/null)" ]; then
+        cat "$cached"
+        exit 0
+    fi
+    valid_url "$UPDATE_URL" || { echo "@@error invalid update url"; exit 1; }
+    # a failed check (offline, no manifest on the release) is not remembered: the next one tries again
+    out=$(curl -fsSL --proto "$UPDATE_PROTO" --max-filesize 65536 --max-time 20 -- "$UPDATE_URL" 2>&1) \
+        || { echo "@@error $(printf '%s' "$out" | tail -n 1)"; exit 1; }
+    mkdir -p "$CACHE" && printf '@@update %s\n%s\n' "$UPDATE_URL" "$out" > "$cached"
+    printf '@@update %s\n%s\n' "$UPDATE_URL" "$out"
+    ;;
+
+update-install)
+    # sh has read this whole "case" before running any of it, so replacing this file below is safe
+    [ $# -ge 3 ] || die "usage: update-install <url> <sha256> <bytes>"
+    url=$1; sha=$2; bytes=$3
+    valid_url "$url" || die "invalid archive url"
+    valid_sha "$sha" || die "invalid sha256"
+    valid_int "$bytes" || die "invalid size"
+    command -v kpackagetool6 >/dev/null 2>&1 || die "kpackagetool6 not found"
+    pkg=$(cd "$HERE/../.." && pwd -P)
+    home=$(cd "${XDG_DATA_HOME:-$HOME/.local/share}/plasma/wallpapers" 2>/dev/null && pwd -P)
+    [ "$pkg" = "$home/$ID" ] && [ -w "$pkg" ] \
+        || die "Live Scenes is not installed in your home folder ($pkg): update it the way it was installed"
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/live-scenes-update.XXXXXX") || die "cannot create a temporary folder"
+    trap 'rm -rf "$tmp"' EXIT
+    tgz="$tmp/package.tar.gz"
+    out=$(curl -fsSL --proto "$UPDATE_PROTO" --max-filesize $(( bytes + 65536 )) --max-time 300 \
+        -o "$tgz" -- "$url" 2>&1) || die "download failed: $(last_line "$out")"
+    [ "$(sha256sum "$tgz" | cut -d' ' -f1)" = "$sha" ] \
+        || die "checksum mismatch: the download is corrupt or the release is being replaced"
+    # the archive holds package/ only: plain files and folders, nothing that could land elsewhere
+    names=$(tar -tzf "$tgz" 2>/dev/null) || die "the download is not a plugin archive"
+    printf '%s\n' "$names" | grep -qvE '^package(/|$)' && die "the plugin archive has unexpected files"
+    printf '%s\n' "$names" | grep -qE '(^|/)\.\.(/|$)' && die "the plugin archive has unexpected files"
+    tar -tvzf "$tgz" | grep -qv '^[-d]' && die "the plugin archive has links in it"
+    mkdir "$tmp/new" && tar -xzf "$tgz" -C "$tmp/new" --no-same-owner || die "cannot unpack the plugin archive"
+    new="$tmp/new/package"
+    grep -q "\"Id\"[[:space:]]*:[[:space:]]*\"$ID\"" "$new/metadata.json" 2>/dev/null \
+        && [ -f "$new/contents/ui/main.qml" ] || die "the plugin archive is not Live Scenes"
+    version=$(package_version "$new")
+    [ -n "$version" ] || die "the plugin archive has no version"
+    # the archive comes without a look: keep the built-in one of this install
+    if [ ! -d "$new/contents/looks" ] && [ -d "$BUNDLED" ]; then
+        cp -R "$BUNDLED" "$new/contents/looks" || die "cannot copy the built-in look"
+    fi
+    cp -R "$pkg" "$tmp/old" || die "cannot back up the installed version"
+    out=$(kpackagetool6 --type Plasma/Wallpaper --upgrade "$new" 2>&1); rc=$?
+    if [ "$rc" -ne 0 ] || [ "$(package_version "$pkg")" != "$version" ]; then
+        # put the old version back if the upgrade removed it
+        [ -f "$pkg/metadata.json" ] || kpackagetool6 --type Plasma/Wallpaper --install "$tmp/old" >/dev/null 2>&1
+        die "kpackagetool6 could not upgrade the package: $(last_line "$out")"
+    fi
+    rm -f "$CACHE/update.json"
+    printf '{"ok": true, "version": "%s"}\n' "$version"
     ;;
 
 *)

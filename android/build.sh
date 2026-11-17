@@ -6,6 +6,14 @@
 # Needs: a JDK (17+), and from the SDK: platform-tools, build-tools, and a platforms;android-<api>.
 # Bundles the default look (Living Water) from build/packs/living-water/, a look pack made by the SDK
 # (sdk/FORMAT.md); set LIVESCENES_DEFAULT_PACK to use another pack folder.
+# The version comes from the VERSION file: versionName as it is, versionCode 2.1.0 -> 20100.
+# Signing: the standard debug key, or a release key with
+#   LIVESCENES_KEYSTORE=<keystore file>  LIVESCENES_KEY_ALIAS=<alias, if the keystore has several>
+#   LIVESCENES_KEYSTORE_PASS=<password>  (if unset, apksigner asks for it)
+# Android only installs an update signed with the same key as the installed app, so every published
+# APK must be signed with the same release key (release.sh).
+# LIVESCENES_DEBUG=1 makes a debuggable build, the only kind that accepts another update manifest:
+#   adb shell am start -n com.designsos.livescenes/.SettingsActivity --es updateUrl http://127.0.0.1:8000/update.json
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -22,6 +30,14 @@ pack=${LIVESCENES_DEFAULT_PACK:-build/packs/living-water}
 [ -f "$pack/scene.json" ] && [ -f "$pack/poster.jpg" ] && { [ -f "$pack/portrait.mp4" ] || [ -f "$pack/landscape.mp4" ]; } || {
   echo "no default look pack in $pack: make it with the SDK (sdk/livescenes), or set LIVESCENES_DEFAULT_PACK" >&2; exit 1; }
 echo "default look: $pack"
+version=$(tr -d '[:space:]' < VERSION)
+IFS=. read -r major minor patch <<EOF
+$version
+EOF
+case "$major$minor$patch" in ''|*[!0-9]*) echo "VERSION must be <major>.<minor>.<patch>, not '$version'" >&2; exit 1 ;; esac
+[ "$minor" -lt 100 ] && [ "$patch" -lt 100 ] || { echo "VERSION: minor and patch must be below 100" >&2; exit 1; }
+code=$(( major * 10000 + minor * 100 + patch ))
+echo "version $version (versionCode $code)${LIVESCENES_DEBUG:+, debuggable}"
 
 out=android/build
 rm -rf "$out"
@@ -38,7 +54,9 @@ else cp "$pack/landscape.mp4" "$out/assets/default/"; fi
 
 "$bt/aapt2" compile --dir "$out/res" -o "$out/res.zip"
 "$bt/aapt2" link -o "$out/base.apk" -I "$jar" --manifest android/AndroidManifest.xml \
+  --version-name "$version" --version-code "$code" ${LIVESCENES_DEBUG:+--debug-mode} \
   -A "$out/assets" -0 mp4 --java "$out/gen" "$out/res.zip"
+echo "$code" > "$out/version-code"
 
 javac --release 17 -nowarn -Xlint:-options -encoding UTF-8 -cp "$jar" -d "$out/classes" \
   $(find android/src "$out/gen" -name '*.java')
@@ -48,16 +66,27 @@ cp "$out/base.apk" "$out/unsigned.apk"
 (cd "$out" && zip -q unsigned.apk classes.dex)
 "$bt/zipalign" -f -p 4 "$out/unsigned.apk" "$out/aligned.apk"
 
-# the standard debug key, made once if this machine has none
-ks=$HOME/.android/debug.keystore
-if [ ! -f "$ks" ]; then
-  mkdir -p "$HOME/.android"
-  keytool -genkeypair -keystore "$ks" -storepass android -keypass android -alias androiddebugkey \
-    -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+if [ -n "${LIVESCENES_KEYSTORE:-}" ]; then
+  # a release key
+  [ -f "$LIVESCENES_KEYSTORE" ] || { echo "LIVESCENES_KEYSTORE: no such file: $LIVESCENES_KEYSTORE" >&2; exit 1; }
+  "$bt/apksigner" sign --ks "$LIVESCENES_KEYSTORE" \
+    ${LIVESCENES_KEY_ALIAS:+--ks-key-alias "$LIVESCENES_KEY_ALIAS"} \
+    ${LIVESCENES_KEYSTORE_PASS:+--ks-pass env:LIVESCENES_KEYSTORE_PASS} \
+    --out "$out/LiveScenes.apk" "$out/aligned.apk"
+else
+  # the standard debug key, made once if this machine has none
+  ks=$HOME/.android/debug.keystore
+  if [ ! -f "$ks" ]; then
+    mkdir -p "$HOME/.android"
+    keytool -genkeypair -keystore "$ks" -storepass android -keypass android -alias androiddebugkey \
+      -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+  fi
+  "$bt/apksigner" sign --ks "$ks" --ks-pass pass:android --key-pass pass:android \
+    --ks-key-alias androiddebugkey --out "$out/LiveScenes.apk" "$out/aligned.apk"
 fi
-"$bt/apksigner" sign --ks "$ks" --ks-pass pass:android --key-pass pass:android \
-  --ks-key-alias androiddebugkey --out "$out/LiveScenes.apk" "$out/aligned.apk"
 echo "built $out/LiveScenes.apk"
+"$bt/apksigner" verify --print-certs "$out/LiveScenes.apk" \
+  | sed -n 's/^Signer #1 certificate SHA-256 digest: /signing key (sha256): /p'
 
 case "${1:-}" in
   --install|--run)

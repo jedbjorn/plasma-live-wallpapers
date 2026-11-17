@@ -46,6 +46,18 @@ ColumnLayout {
     property var progress: ({ state: "", bytes: 0, message: "", file: "" })
     property bool saving: false
 
+    // updates of the plugin itself: the installed version (metadata.json on disk), the newer release
+    // if there is one ({ version, notes, url, sha256, bytes }), and what is going on
+    property string installedVersion: ""
+    property var update: null
+    property string updateState: ""           // "", "checking", "installing"
+    property string updateError: ""
+    property string updateNote: ""            // the answer to "Check for updates"
+    // an upgrade is on disk, but plasmashell still runs the code it loaded before
+    readonly property bool restartNeeded: Store.validVersion(installedVersion)
+                                          && Store.compareVersions(installedVersion, Store.VERSION) > 0
+    readonly property string restartCommand: "systemctl --user restart plasma-plasmashell.service"
+
     spacing: Kirigami.Units.largeSpacing
 
     Helper {
@@ -271,6 +283,51 @@ ColumnLayout {
         });
     }
 
+    // Is there a newer release? helper.sh asks GitHub at most once a day, unless `force` (the
+    // "Check for updates" button). Being offline is only reported when the user asked.
+    function checkUpdate(force) {
+        if (page.updateState !== "")
+            return;
+        page.updateState = "checking";
+        page.updateNote = "";
+        helper.run(["version"], version => {
+            page.installedVersion = version.trim();
+            helper.run(force ? ["update-check", "force"] : ["update-check"], out => {
+                page.updateState = "";
+                const u = Store.parseUpdate(out);
+                const newer = u !== null && Store.validVersion(page.installedVersion)
+                    && Store.compareVersions(u.version, page.installedVersion) > 0;
+                page.update = newer ? u : null;
+                if (!force || newer)
+                    return;
+                if (out.indexOf("@@error") === 0)
+                    page.updateNote = "Couldn't check: " + out.slice(8).trim();
+                else
+                    page.updateNote = u ? "This is the latest version." : "The latest release has no Plasma update.";
+            });
+        });
+    }
+
+    // Download the release's plugin archive and upgrade the installed package. plasmashell is not
+    // restarted: the new version is used from its next start on.
+    function installUpdate() {
+        const u = page.update;
+        if (!u || page.updateState !== "")
+            return;
+        page.updateState = "installing";
+        page.updateError = "";
+        helper.run(["update-install", u.url, u.sha256, String(u.bytes)], out => {
+            page.updateState = "";
+            const r = Store.parseJson(out);
+            if (!r || !r.ok) {
+                page.updateError = r && r.error ? r.error : out;
+                return;
+            }
+            page.update = null;
+            page.installedVersion = r.version;
+        });
+    }
+
     // Start a moment after creation: Plasma creates this page once just to read its cfg_ keys and
     // destroys it right away; that copy must not touch any files.
     Timer {
@@ -279,6 +336,7 @@ ColumnLayout {
         onTriggered: {
             helper.run(["clear-previews"], () => page.refresh());   // leftovers of earlier visits
             page.loadCatalog();
+            page.checkUpdate(false);
         }
     }
 
@@ -321,6 +379,67 @@ ColumnLayout {
         visible: text !== ""
         showCloseButton: true
         onVisibleChanged: if (!visible) page.error = ""
+    }
+
+    // ---------------------------------------------------------------- updates
+
+    Kirigami.InlineMessage {
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Information
+        visible: page.update !== null
+        text: {
+            if (!page.update)
+                return "";
+            if (page.updateState === "installing")
+                return "Installing Live Scenes " + page.update.version + "…";
+            return "Live Scenes " + page.update.version + " is available (" + page.installedVersion
+                + " is installed). Updating downloads " + Store.formatBytes(page.update.bytes)
+                + "; your profiles and saved looks are kept.";
+        }
+        actions: [
+            Kirigami.Action {
+                text: "Update"
+                icon.name: "update-none"
+                enabled: page.updateState === ""
+                onTriggered: page.installUpdate()
+            },
+            Kirigami.Action {
+                text: "What's new"
+                icon.name: "internet-services"
+                visible: page.update !== null && page.update.notes !== ""
+                onTriggered: Qt.openUrlExternally(page.update.notes)
+            }
+        ]
+    }
+    Kirigami.InlineMessage {
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Error
+        text: page.updateError !== "" ? "The update failed: " + page.updateError : ""
+        visible: text !== ""
+        showCloseButton: true
+        onVisibleChanged: if (!visible) page.updateError = ""
+    }
+    Kirigami.InlineMessage {
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Positive
+        visible: page.restartNeeded
+        text: "Live Scenes " + page.installedVersion + " is installed. Plasma keeps running version "
+            + Store.VERSION + " until plasmashell restarts: log out and back in, or run\n" + page.restartCommand
+        actions: [
+            Kirigami.Action {
+                text: "Copy command"
+                icon.name: "edit-copy"
+                onTriggered: {
+                    clipboard.text = page.restartCommand;
+                    clipboard.selectAll();
+                    clipboard.copy();
+                }
+            }
+        ]
+    }
+    TextEdit {
+        id: clipboard                         // QML's only way to the clipboard
+        visible: false
     }
 
     Kirigami.FormLayout {
@@ -740,6 +859,22 @@ ColumnLayout {
             text: "Empty uses the official catalog. Saved looks and profiles are kept in "
                 + (page.store ? page.store.dataDir : "~/.local/share/live-scenes")
                 + "; looks added with the SDK (livescenes add) show up here too."
+        }
+        RowLayout {
+            Kirigami.FormData.label: "Version:"
+            QQC2.Label {
+                text: Store.VERSION
+            }
+            QQC2.Button {
+                text: "Check for updates"
+                icon.name: "view-refresh"
+                enabled: page.updateState === ""
+                onClicked: page.checkUpdate(true)
+            }
+            QQC2.Label {
+                text: page.updateState === "checking" ? "Checking…" : page.updateNote
+                opacity: 0.7
+            }
         }
     }
 }

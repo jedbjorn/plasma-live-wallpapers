@@ -6,6 +6,8 @@ import android.content.SharedPreferences;
 /** App settings (profiles live in {@link Store}). */
 final class Prefs {
     static final String CATALOG_URL = "catalogUrl", DEV_AWAKE = "devAwake", FREEZE_BELOW = "freezeBelow";
+    /** The last update check: when (ms), and the manifest it got (see {@link Update}). */
+    static final String UPDATE_CHECKED = "updateChecked", UPDATE_MANIFEST = "updateManifest";
     /** Battery levels (%) the wallpaper can freeze below; 0 = never. */
     static final int[] FREEZE_LEVELS = {0, 20, 30, 50};
     static final int DEFAULT_FREEZE_BELOW = 50;
