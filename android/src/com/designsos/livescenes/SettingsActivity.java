@@ -162,7 +162,7 @@ public class SettingsActivity extends Activity {
     void checkUpdate(boolean asked) {
         if (updating) return;
         if (asked) updateNote.setText("Checking…");
-        Ui.IO.execute(() -> {
+        Ui.NET.execute(() -> {
             try {
                 Update.Info found = Update.check(this, asked);
                 runOnUiThread(() -> {
@@ -226,7 +226,7 @@ public class SettingsActivity extends Activity {
         if (updating || update == null) return;
         Update.Info u = update;
         showUpdate("Downloading…", true);
-        Ui.IO.execute(() -> {
+        Ui.NET.execute(() -> {
             try {
                 File apk = Update.download(this, u, (done, total) -> runOnUiThread(() -> {
                     if (updating) showUpdate("Downloading " + Ui.size(this, done) + " of " + Ui.size(this, u.bytes) + "…", true);
@@ -381,7 +381,7 @@ public class SettingsActivity extends Activity {
         String url = prefs.catalogUrl();
         catalogStatus.setText("Loading the catalog…");
         catalogStatus.setVisibility(View.VISIBLE);
-        Ui.IO.execute(() -> {
+        Ui.NET.execute(() -> {
             try {
                 List<Catalog.Entry> list = Catalog.fetch(url, orientation);
                 runOnUiThread(() -> { if (req == catalogRequest) { catalog = list; renderCatalog(); } });

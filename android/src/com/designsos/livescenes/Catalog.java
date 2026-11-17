@@ -1,5 +1,8 @@
 package com.designsos.livescenes;
 
+import android.os.SystemClock;
+import android.util.Log;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -11,6 +14,7 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -67,10 +71,23 @@ final class Catalog {
         return list;
     }
 
+    /** A small file (the catalog, the update manifest); tried once more if the server doesn't answer in time. */
     static byte[] get(URL url) throws IOException {
+        try {
+            return getOnce(url);
+        } catch (SocketTimeoutException e) {
+            Log.w(LiveWallpaperService.TAG, url + ": " + e.getMessage() + ", trying again");
+            return getOnce(url);
+        }
+    }
+
+    static byte[] getOnce(URL url) throws IOException {
+        long t0 = SystemClock.elapsedRealtime();
         HttpURLConnection c = open(url);
         try (InputStream in = c.getInputStream()) {
-            return in.readAllBytes();
+            byte[] b = in.readAllBytes();
+            Log.i(LiveWallpaperService.TAG, "got " + url + " (" + b.length + " bytes) in " + (SystemClock.elapsedRealtime() - t0) + " ms");
+            return b;
         } finally {
             c.disconnect();
         }
@@ -104,6 +121,12 @@ final class Catalog {
         if (!part.renameTo(dest)) { part.delete(); throw new IOException("can't save " + dest); }
     }
 
+    /**
+     * Opens a GET, following redirects. Every request gets its own connection ("Connection: close"): this process
+     * lives as long as the wallpaper, and a kept-alive connection from the last visit is often dead by the next one
+     * (the phone slept, the NAT forgot it) without the socket knowing. Reused, it ate the whole read timeout and
+     * failed, and only the next try (on a new connection) worked.
+     */
     static HttpURLConnection open(URL url) throws IOException {
         // follow redirects by hand too: GitHub release assets redirect, and Java won't cross http -> https
         for (int hops = 0; hops < 6; hops++) {
@@ -112,6 +135,7 @@ final class Catalog {
             c.setReadTimeout(30_000);
             c.setInstanceFollowRedirects(false);
             c.setRequestProperty("User-Agent", "LiveScenes-Android");
+            c.setRequestProperty("Connection", "close");
             int code = c.getResponseCode();
             if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) {
                 url = new URL(url, c.getHeaderField("Location"));
