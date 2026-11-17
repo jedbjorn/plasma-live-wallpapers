@@ -31,6 +31,7 @@ ID_RE = re.compile(r"^[a-z0-9-]+$")
 ANDROID_PACKAGE = "com.designsos.livescenes"
 DEFAULT_CRF = 24
 DEFAULT_PRESET = "slow"
+LEVELS = ("weak", "medium", "strong")   # a look's optional level knob (sdk/FORMAT.md, "Levels")
 
 
 # --------------------------------------------------------------------------------------------- helpers
@@ -359,18 +360,30 @@ def cmd_pack(a):
         raise Fail("--portrait-rotate makes the portrait video from SRC; it cannot be combined with --portrait")
     if a.portrait_rotate and a.no_portrait:
         raise Fail("--portrait-rotate and --no-portrait contradict each other")
+    if (a.level_label or a.level_default) and not a.level:
+        raise Fail("--level-label and --level-default go with --level")
     out = Path(a.output)
     if out.name != a.id:
         warn(f"the pack folder should be named after its id ({a.id}), not {out.name}")
-    theme = parse_theme(a.theme, a.theme_light, a.theme_style) if a.theme else None
-    if theme is None and (out / "scene.json").is_file():   # re-packing: keep the theme designed for it
+    prev = {}
+    if (out / "scene.json").is_file():
         try:
-            old = json.loads((out / "scene.json").read_text(encoding="utf-8")).get("theme")
+            prev = json.loads((out / "scene.json").read_text(encoding="utf-8"))
         except ValueError:
-            old = None
-        if old and not theme_problems(old):
-            theme = old
-            info(f"keeping the theme of {out}/scene.json: {theme_line(theme)}")
+            pass
+    theme = parse_theme(a.theme, a.theme_light, a.theme_style) if a.theme else None
+    if theme is None and prev.get("theme") and not theme_problems(prev["theme"]):   # re-packing: keep its theme
+        theme = prev["theme"]
+        info(f"keeping the theme of {out}/scene.json: {theme_line(theme)}")
+    levels = None
+    if a.level:                          # one level of the knob; the levels packed before are kept
+        old = prev.get("levels") or {}
+        levels = {"label": a.level_label or old.get("label"),
+                  "default": a.level_default or old.get("default") or "strong",
+                  "videos": dict(old.get("videos") or {})}
+        if not levels["label"]:
+            raise Fail("the first --level needs --level-label: the knob's name in the apps, e.g. Twinkle")
+    suffix = f"-{a.level}" if a.level else ""
     src = Source(a.src)
     psrc = Source(a.portrait) if a.portrait else None
 
@@ -395,27 +408,33 @@ def cmd_pack(a):
     videos = {}
     if not a.no_landscape:
         w, h = SIZES["landscape"]
-        foc = encode(src, seek, 0, L, F, w, h, a.focus, a.crf, a.preset, out / "landscape.mp4", "landscape",
+        foc = encode(src, seek, 0, L, F, w, h, a.focus, a.crf, a.preset, out / f"landscape{suffix}.mp4", "landscape",
                      a.x265)
         videos["landscape"] = foc
     if not a.no_portrait:
         w, h = SIZES["portrait"]
         if psrc:
             foc = encode(psrc, seek, 0, L, F, w, h, a.portrait_focus or (0.5, 0.5), a.portrait_crf or a.crf,
-                         a.preset, out / "portrait.mp4", "portrait", a.x265)
+                         a.preset, out / f"portrait{suffix}.mp4", "portrait", a.x265)
         else:
             foc = encode(src, seek, 0, L, F, w, h, a.portrait_focus or a.focus, a.portrait_crf or a.crf,
-                         a.preset, out / "portrait.mp4", "portrait", a.x265, a.portrait_rotate)
+                         a.preset, out / f"portrait{suffix}.mp4", "portrait", a.x265, a.portrait_rotate)
         videos["portrait"] = foc
-    for stale in ("landscape", "portrait"):
-        if stale not in videos and (out / f"{stale}.mp4").exists():
-            (out / f"{stale}.mp4").unlink()
+    # videos no longer described: the other orientation, plain files after level ones and the other way round
+    keep = {f"{o}{suffix}.mp4" for o in videos}
+    if levels:
+        keep |= {v["file"] for lv, vs in levels["videos"].items() if lv != a.level for v in vs.values()}
+    for f in out.glob("*.mp4"):
+        if f.name not in keep and re.fullmatch(r"(landscape|portrait)(-[a-z]+)?\.mp4", f.name):
+            f.unlink()
 
-    poster_src = out / ("landscape.mp4" if "landscape" in videos else "portrait.mp4")
-    pt = min(max(a.poster_time, 0), (L - 1) / FPS)
-    run([tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{pt:.3f}", "-i", str(poster_src),
-         "-frames:v", "1", "-vf", f"scale='if(gte(iw,ih),{POSTER_LONG},-2)':'if(gte(iw,ih),-2,{POSTER_LONG})'"
-         ":flags=lanczos", "-q:v", "3", str(out / "poster.jpg")])
+    # the poster shows the default level (another level only until the default one is packed)
+    if not levels or a.level == levels["default"] or not (out / "poster.jpg").is_file():
+        poster_src = out / (f"landscape{suffix}.mp4" if "landscape" in videos else f"portrait{suffix}.mp4")
+        pt = min(max(a.poster_time, 0), (L - 1) / FPS)
+        run([tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{pt:.3f}", "-i", str(poster_src),
+             "-frames:v", "1", "-vf", f"scale='if(gte(iw,ih),{POSTER_LONG},-2)':'if(gte(iw,ih),-2,{POSTER_LONG})'"
+             ":flags=lanczos", "-q:v", "3", str(out / "poster.jpg")])
 
     scene = {"format": FORMAT_VERSION, "id": a.id, "title": a.title}
     for k in ("author", "license", "description"):
@@ -424,18 +443,28 @@ def cmd_pack(a):
     scene["loop"] = round(L / FPS, 3)
     scene["videos"] = {}
     for orient, foc in videos.items():
-        f = out / f"{orient}.mp4"
+        f = out / f"{orient}{suffix}.mp4"
         w, h = SIZES[orient]
         scene["videos"][orient] = {"file": f.name, "width": w, "height": h, "fps": FPS,
                                    "bytes": f.stat().st_size, "sha256": sha256(f), "focus": list(foc)}
         if orient == "portrait" and a.portrait_rotate:
             scene["videos"][orient]["rotate"] = ROTATIONS[a.portrait_rotate][0]
+    packed = scene["videos"]
+    if levels:
+        levels["videos"][a.level] = packed
+        levels["videos"] = {lv: levels["videos"][lv] for lv in LEVELS if lv in levels["videos"]}
+        scene["videos"] = levels["videos"].get(levels["default"], packed)   # always the default level's
+        scene["levels"] = levels
     if theme:
         scene["theme"] = theme
     write_json(out / "scene.json", scene)
     info(f"\npack written: {out}/  (loop {scene['loop']} s)")
-    for orient, v in scene["videos"].items():
-        info(f"  {v['file']:<14} {v['width']}x{v['height']}  {human(v['bytes'])}  focus {v['focus']}")
+    for orient, v in packed.items():
+        info(f"  {v['file']:<20} {v['width']}x{v['height']}  {human(v['bytes'])}  focus {v['focus']}")
+    if levels:
+        todo = [lv for lv in LEVELS if lv not in levels["videos"]]
+        info(f"  level {a.level} of {levels['label']} (default {levels['default']})"
+             + (f"; still to pack: {', '.join(todo)}" if todo else ""))
     info("  poster.jpg")
     if theme:
         info(f"  theme {theme_line(theme)}")
@@ -521,8 +550,8 @@ def seam_check(c, path, label, vw, vh, key_frames):
          f"into keyframes: {kf / 1.5 if keyed else 0:.2f} (90th pct); limit {limit:.2f}")
 
 
-def check_video(c, pack, orient, v, loop):
-    label = orient
+def check_video(c, pack, orient, v, loop, label=None):
+    label = label or orient
     f = pack / str(v.get("file", ""))
     if not c.ok(f.is_file(), f"{label}: file {v.get('file')} exists"):
         return
@@ -592,6 +621,31 @@ def check_video(c, pack, orient, v, loop):
     seam_check(c, f, label, w, h, [round(t * FPS) for t in keys])
 
 
+def check_levels(c, pack, scene, loop):
+    """The level knob: a label, a default, and the videos of all three levels (the plain videos are the default's)."""
+    lv = scene["levels"]
+    if not c.ok(isinstance(lv, dict), "levels is an object"):
+        return
+    c.ok(isinstance(lv.get("label"), str) and lv["label"].strip() != "", "levels.label is set", repr(lv.get("label")))
+    c.ok(lv.get("default") in LEVELS, f"levels.default is one of {', '.join(LEVELS)}", repr(lv.get("default")))
+    vids = lv.get("videos")
+    if not c.ok(isinstance(vids, dict) and set(vids) == set(LEVELS), f"levels.videos has {', '.join(LEVELS)}",
+                str(list(vids) if isinstance(vids, dict) else vids)):
+        return
+    c.ok(vids.get(lv.get("default")) == scene["videos"], "videos are the default level's")
+    for level in LEVELS:
+        vs = vids[level]
+        if not c.ok(isinstance(vs, dict) and set(vs) == set(scene["videos"]),
+                    f"{level}: the same orientations as videos", str(list(vs) if isinstance(vs, dict) else vs)):
+            continue
+        if level == lv.get("default"):
+            continue                                  # checked as the plain videos
+        for orient, v in vs.items():
+            if c.ok(isinstance(v, dict) and all(k in v for k in ("file", "width", "height", "fps", "bytes", "sha256")),
+                    f"{level} {orient}: has file, width, height, fps, bytes, sha256"):
+                check_video(c, pack, orient, v, loop, f"{level} {orient}")
+
+
 def cmd_check(a):
     pack = Path(a.packdir)
     c = Checker()
@@ -629,6 +683,8 @@ def cmd_check(a):
             if c.ok(isinstance(v, dict) and all(k in v for k in ("file", "width", "height", "fps", "bytes", "sha256")),
                     f"{orient}: has file, width, height, fps, bytes, sha256"):
                 check_video(c, pack, orient, v, loop)
+    if "levels" in scene:
+        check_levels(c, pack, scene, loop)
     if "theme" in scene:
         problems = theme_problems(scene["theme"])
         if c.ok(not problems, "theme is valid", "; ".join(problems)):
@@ -700,7 +756,9 @@ def add_android(pack, scene):
         warn(f"{ANDROID_PACKAGE} does not seem to be installed on the device")
     dest = f"/sdcard/Android/data/{ANDROID_PACKAGE}/files/import/{sid}"
     run([adb, "shell", "mkdir", "-p", dest])
-    files = [f for f in ("landscape.mp4", "portrait.mp4", "poster.jpg") if (pack / f).is_file()] + ["scene.json"]
+    # the plain videos (a look with levels: its default level's); the app keeps the one the phone needs
+    files = [v["file"] for v in scene["videos"].values() if (pack / v["file"]).is_file()]
+    files += [f for f in ("poster.jpg",) if (pack / f).is_file()] + ["scene.json"]
     for f in files:                                   # scene.json last: the pack is complete once it appears
         info(f"push {f}")
         run([adb, "push", str(pack / f), f"{dest}/{f}"])
@@ -729,16 +787,20 @@ def cmd_add(a):
     root = data_dir()
     look = root / "looks" / sid
     look.mkdir(parents=True, exist_ok=True)
-    tmp = look / f".{orient}.mp4.part"
+    level = scene["levels"]["default"] if scene.get("levels") else None
+    name = f"{orient}-{level}.mp4" if level else f"{orient}.mp4"
+    tmp = look / f".{name}.part"
     shutil.copyfile(src, tmp)
-    os.replace(tmp, look / f"{orient}.mp4")
-    for other in ("landscape.mp4", "portrait.mp4"):
-        if other != f"{orient}.mp4" and (look / other).exists():
-            (look / other).unlink()
+    os.replace(tmp, look / name)
+    for other in look.glob("*.mp4"):
+        if other.name != name:
+            other.unlink()
     if (pack / "poster.jpg").is_file():
         shutil.copyfile(pack / "poster.jpg", look / "poster.jpg")
     saved = dict(scene)
-    saved["videos"] = {orient: v}                     # only the file that is on this device
+    saved["videos"] = {orient: dict(v, file=name)}    # only the file that is on this device
+    if level:
+        saved["level"] = level
     write_json(look / "scene.json", saved)
 
     pf = root / "profiles.json"
@@ -819,26 +881,40 @@ def cmd_catalog(a):
         if (pack / "poster.jpg").is_file():
             copy_asset(pack / "poster.jpg", rel / f"{sid}-poster.jpg")
             entry["poster"] = f"{sid}-poster.jpg"
-        entry["videos"] = {}
-        for orient in ("landscape", "portrait"):
-            v = scene["videos"].get(orient)
-            if not v:
-                continue
-            src = pack / v["file"]
-            name = f"{sid}-{orient}.mp4"
-            copy_asset(src, rel / name)
-            digest = sha256(rel / name)
-            if digest != v.get("sha256"):
-                raise Fail(f"{src}: sha256 does not match scene.json; run `livescenes check {pack}`")
-            entry["videos"][orient] = {"url": name, "width": v["width"], "height": v["height"],
-                                       "bytes": (rel / name).stat().st_size, "sha256": digest,
-                                       "focus": v.get("focus", [0.5, 0.5])}
-            if "rotate" in v:
-                entry["videos"][orient]["rotate"] = v["rotate"]
+        lv = scene.get("levels")
+        if lv:
+            # every level's videos as <id>-<orientation>-<level>.mp4; the plain videos are the default level's
+            entry["levels"] = {"label": lv["label"], "default": lv["default"],
+                               "videos": {level: catalog_videos(pack, sid, vs, rel, f"-{level}")
+                                          for level, vs in lv["videos"].items()}}
+            entry["videos"] = entry["levels"]["videos"][lv["default"]]
+        else:
+            entry["videos"] = catalog_videos(pack, sid, scene["videos"], rel, "")
         looks = [l for l in looks if l.get("id") != sid] + [entry]
-        info(f"{sid}: " + ", ".join(f"{o} {human(e['bytes'])}" for o, e in entry["videos"].items()))
+        for level, vs in (entry["levels"]["videos"].items() if lv else [("", entry["videos"])]):
+            info(f"{sid}{' ' + level if level else ''}: " + ", ".join(f"{o} {human(e['bytes'])}" for o, e in vs.items()))
     write_json(cat_path, {"format": FORMAT_VERSION, "looks": looks})
     info(f"\nwrote {cat_path} ({len(looks)} looks). Upload everything in {rel}/ as release assets.")
+
+
+def catalog_videos(pack, sid, videos, rel, suffix):
+    """Copies a pack's videos into the release folder as <id>-<orientation><suffix>.mp4; their catalog entries."""
+    out = {}
+    for orient in ("landscape", "portrait"):
+        v = videos.get(orient)
+        if not v:
+            continue
+        src = pack / v["file"]
+        name = f"{sid}-{orient}{suffix}.mp4"
+        copy_asset(src, rel / name)
+        digest = sha256(rel / name)
+        if digest != v.get("sha256"):
+            raise Fail(f"{src}: sha256 does not match scene.json; run `livescenes check {pack}`")
+        out[orient] = {"url": name, "width": v["width"], "height": v["height"],
+                       "bytes": (rel / name).stat().st_size, "sha256": digest, "focus": v.get("focus", [0.5, 0.5])}
+        if "rotate" in v:
+            out[orient]["rotate"] = v["rotate"]
+    return out
 
 
 def copy_asset(src, dst):
@@ -876,7 +952,11 @@ the portrait video is cropped out of SRC (a narrow vertical slice of a landscape
 Footage is resampled to 30 fps, encoded as HEVC (H.265) Main 8-bit, and HDR footage is tone-mapped to SDR.
 
 The focus point is also stored in scene.json so players cropping the video for other screen shapes
-keep it in view."""
+keep it in view.
+
+Levels: a look may have one knob with three levels (weak, medium, strong), e.g. how strongly lights
+twinkle. Each level is its own render of the same loop, packed with --level into the same folder; the
+apps download only the level the user picks (--level-default first)."""
 
 PACK_EPILOG = """examples:
   # 20 s phone clip, use 15 s of it, crossfade 2 s, keep the subject (left third) in the portrait crop
@@ -890,7 +970,13 @@ PACK_EPILOG = """examples:
   livescenes pack art.mkv --portrait-rotate cw -o packs/poster --id poster --title Poster
 
   # desktop only
-  livescenes pack ae-export.mov --no-portrait -o packs/grid --id grid --title Grid"""
+  livescenes pack ae-export.mov --no-portrait -o packs/grid --id grid --title Grid
+
+  # a level knob: three renders of the same loop, the user picks one in the apps (only it is downloaded)
+  livescenes pack glow-3.mkv --portrait glow-3p.mkv --fade 0 -o packs/glow --id glow --title Glow \\
+      --level strong --level-label Glow --level-default strong
+  livescenes pack glow-2.mkv --portrait glow-2p.mkv --fade 0 -o packs/glow --id glow --title Glow --level medium
+  livescenes pack glow-1.mkv --portrait glow-1p.mkv --fade 0 -o packs/glow --id glow --title Glow --level weak"""
 
 
 def build_parser():
@@ -947,6 +1033,14 @@ def build_parser():
                    help="with --theme: the look is light (dark text suits it); looks are dark by default")
     p.add_argument("--theme-style", choices=STYLES, metavar="STYLE",
                    help="with --theme: the Material You style that suits the look (" + ", ".join(STYLES) + ")")
+    p.add_argument("--level", choices=LEVELS,
+                   help="pack SRC as one level of the look's level knob (weak, medium or strong: three renders of "
+                        "the same loop, e.g. a weaker or stronger effect): writes landscape-LEVEL.mp4 and "
+                        "portrait-LEVEL.mp4 and keeps the levels packed before. Pack all three into the same OUTDIR")
+    p.add_argument("--level-label", metavar="TEXT",
+                   help="with --level: the knob's name in the apps, e.g. Twinkle (needed once)")
+    p.add_argument("--level-default", choices=LEVELS,
+                   help="with --level: the level the apps download first, and the poster's (default strong)")
 
     p = sub.add_parser("check", help="validate a look pack: format, encoding, checksums, loop seam",
                        description="Validate a look pack against sdk/FORMAT.md: scene.json fields, video codec, "
@@ -987,7 +1081,8 @@ def build_parser():
 
     p = sub.add_parser("catalog", help="write release assets and catalog.json for one or more packs",
                        description="Copy the packs' files into RELEASEDIR as flat release assets "
-                       "(<id>-landscape.mp4, <id>-portrait.mp4, <id>-poster.jpg) and write catalog.json with "
+                       "(<id>-landscape.mp4, <id>-portrait.mp4, <id>-poster.jpg; a look with levels has "
+                       "<id>-landscape-<level>.mp4 and so on for each level) and write catalog.json with "
                        "URLs relative to it. Upload the folder's contents as GitHub Release assets (or to any web "
                        "server) and point the apps' catalog URL at catalog.json.",
                        formatter_class=argparse.RawDescriptionHelpFormatter)
