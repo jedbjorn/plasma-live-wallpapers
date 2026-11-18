@@ -36,6 +36,9 @@ https://github.com/user-attachments/assets/c4362d1e-b1f9-44e8-b46b-99c9e87d04bd
 - **Embers**: warm sparks lifting off the floor of a dark red forest.
 - **Avenue Flow**: a city at dusk from above, with traffic streaming along a long avenue and twinkling lights. The twinkle has three strengths to choose from (Weak, Medium, Strong; Strong by default).
 - **Night Wind**: an ink-drawn witch under the moon, her cape billowing as wind lines streak past.
+- **Window Seat**: pixel art of a rainy city window at night; a black cat hops up onto the sill, watches the city for a while, stretches and wanders off along the desk. Phones get a closer layout of their own on the right side of the picture.
+- **Circuit**: a circuit board that draws itself trace by trace behind small blue tracer lights, then lets them take it back.
+- **Under the Wave**: a great wave builds and breaks over a little schooner, which capsizes, bobs keel-up, rights herself and sails on. Two options: Frame (Inside the circle, or Breaks out, with the wave and the ship leaving the circle) and Color (an Indigo or Seafoam theme on Android).
 
 The looks were made once from animated web pages, which are kept in [`scenes-src/`](scenes-src/) as their source; `sdk/capture` records such a page frame by frame into a perfect loop for `livescenes pack`. The apps no longer render anything live.
 
