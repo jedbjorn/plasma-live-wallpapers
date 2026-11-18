@@ -12,14 +12,14 @@
 //                    past Fuji; nothing leaves the medallion.
 //   ?frame=breakout  Breaks out: the wave rears past the circle's edge, foam and spray fly out onto
 //                    the slate, and she sails in from the left of the screen and out the same way.
-// On phones the medallion is framed by its diameter, not cropped: 80% of the width (inside), or 72%
-// and off to the right so she has slate to cross (breakout).
+// On phones the medallion is framed by its diameter, not cropped, and centred: 80% of the width
+// (inside), or 72% so the breaking wave and the ship have slate around it (breakout).
 const breakout = new URLSearchParams(location.search).get('frame') === 'breakout';
 Wave.run({
   L: 28,
   breakout,
   frame: portrait => !portrait ? { disc: 0.50, ax: 0.5, ay: 0.5 }
-    : breakout ? { disc: 0.72, ax: 0.56, ay: 0.46 } : { disc: 0.80, ax: 0.5, ay: 0.46 }
+    : breakout ? { disc: 0.72, ax: 0.5, ay: 0.5 } : { disc: 0.80, ax: 0.5, ay: 0.5 }
 });
 </script>
 </body></html>
