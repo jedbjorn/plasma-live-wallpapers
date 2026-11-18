@@ -22,6 +22,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -29,10 +30,12 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import static com.designsos.livescenes.Ui.dp;
@@ -57,8 +60,8 @@ public class SettingsActivity extends Activity {
     static List<Catalog.Entry> lastCatalog;
     static String lastCatalogUrl;
     final Runnable onStore = () -> { renderProfiles(); renderCatalog(); };   // cards show what's saved
-    String levelLook, levelStatus;   // the saved look whose level is being downloaded, and how far it is
-    TextView levelNote;
+    String choiceLook, choiceStatus;   // the saved look whose variant is being downloaded, and how far it is
+    TextView choiceNote;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -339,96 +342,150 @@ public class SettingsActivity extends Activity {
         row.addView(actions);
 
         JSONObject scene = store.scene(p.look);
-        JSONObject levels = scene != null ? scene.optJSONObject("levels") : null;
-        if (levels != null) row.addView(levelRow(p, levels.optString("label", "Level"), Store.level(scene)));
+        if (Store.options(scene) != null) row.addView(optionRows(p, scene));
 
         row.setOnClickListener(v -> store.setActive(p.id));
         return row;
     }
 
-    /** The look's level knob (FORMAT.md "Levels"): Weak / Medium / Strong, for every profile of the look. */
-    View levelRow(Store.Profile p, String label, String current) {
+    /**
+     * The look's options (FORMAT.md "Options"), one row each: its label, then its values; drawn from scene.json, so
+     * any option works. A change applies to every profile of the look: a video option downloads that variant, a
+     * theme option just sets the saved theme.
+     */
+    View optionRows(Store.Profile p, JSONObject scene) {
         LinearLayout box = column();
-        LinearLayout line = new LinearLayout(this);
-        line.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name = Ui.text(this, label, 14);
-        name.setAlpha(0.7f);
-        name.setPadding(dp(this, 8), 0, dp(this, 4), 0);
-        line.addView(name);
-        for (String l : Store.LEVELS) {
-            Button b = Ui.flatButton(this, cap(l));
-            if (l.equals(current)) {
-                b.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
-                b.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
-            } else {
-                b.setAlpha(0.6f);
-                b.setEnabled(levelLook == null);
-                b.setOnClickListener(v -> setLevel(p.look, label, l));
+        JSONArray opts = Store.options(scene);
+        String key = Store.choice(scene);
+        String[] chosen = key != null ? key.split("-") : new String[0];
+        int vi = 0;   // the video option's place in the variant key (theme options aren't in it)
+        // the rows line up: one width for the labels, and one per column of values
+        TextView probe = Ui.text(this, "", 14);
+        float widest = 0;
+        for (int i = 0; i < opts.length(); i++)
+            widest = Math.max(widest, probe.getPaint().measureText(opts.optJSONObject(i).optString("label", "Option")));
+        int labelWidth = (int) Math.ceil(widest) + dp(this, 12);
+        List<List<Button>> columns = new ArrayList<>();
+        for (int i = 0; i < opts.length(); i++) {
+            JSONObject opt = opts.optJSONObject(i);
+            JSONArray values = opt.optJSONArray("values");
+            boolean theme = Store.isTheme(opt);
+            int at = theme ? -1 : vi++;
+            String current = theme ? Store.themeValue(opt, scene.optJSONObject("theme")) : chosen[at];
+            String label = opt.optString("label", "Option");
+            LinearLayout line = new LinearLayout(this);
+            line.setGravity(Gravity.CENTER_VERTICAL);
+            TextView name = Ui.text(this, label, 14);
+            name.setAlpha(0.7f);
+            name.setPadding(dp(this, 8), 0, dp(this, 4), 0);
+            name.setWidth(labelWidth);
+            line.addView(name);
+            for (int j = 0; j < values.length(); j++) {
+                JSONObject v = values.optJSONObject(j);
+                String id = v.optString("id"), text = v.optString("label", cap(id));
+                Button b = Ui.flatButton(this, text);
+                if (columns.size() <= j) columns.add(new ArrayList<>());
+                columns.get(j).add(b);
+                if (id.equals(current)) {
+                    b.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+                    b.setTextColor(Ui.attrColor(this, android.R.attr.colorAccent));
+                } else if (theme) {   // just colors: scene.json changes, nothing to download
+                    JSONObject t = v.optJSONObject("theme");
+                    b.setAlpha(0.6f);
+                    b.setOnClickListener(x -> store.setTheme(p.look, t));
+                } else {
+                    String next = Store.withValue(key, at, id);
+                    b.setAlpha(0.6f);
+                    b.setEnabled(choiceLook == null);
+                    b.setOnClickListener(x -> setChoice(p.look, scene, next));
+                }
+                b.setContentDescription(label + " " + text + " for " + store.lookTitle(p.look));
+                line.addView(b);
             }
-            b.setContentDescription(label + " " + l + " for " + store.lookTitle(p.look));
-            line.addView(b);
+            HorizontalScrollView scroll = new HorizontalScrollView(this);   // many values still fit
+            scroll.setHorizontalScrollBarEnabled(false);
+            scroll.addView(line);
+            box.addView(scroll);
         }
-        box.addView(line);
-        if (p.look.equals(levelLook)) {
-            levelNote = Ui.text(this, levelStatus, 13);
-            levelNote.setAlpha(0.7f);
-            levelNote.setPadding(dp(this, 8), 0, 0, dp(this, 6));
-            box.addView(levelNote);
+        for (List<Button> column : columns) {
+            int w = 0;
+            for (Button b : column) {   // measured bold: the chosen value is
+                android.graphics.Paint paint = new android.graphics.Paint(b.getPaint());
+                paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+                w = Math.max(w, (int) Math.ceil(paint.measureText(b.getText().toString())) + b.getPaddingLeft() + b.getPaddingRight());
+            }
+            for (Button b : column) {
+                b.setMinWidth(w);
+                b.setMinimumWidth(w);
+                b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            }
+        }
+        if (p.look.equals(choiceLook)) {
+            choiceNote = Ui.text(this, choiceStatus, 13);
+            choiceNote.setAlpha(0.7f);
+            choiceNote.setPadding(dp(this, 8), 0, 0, dp(this, 6));
+            box.addView(choiceNote);
         }
         return box;
     }
 
-    /** Downloads a level's video for a saved look from the catalog; it then replaces the saved one (and is deleted). */
-    void setLevel(String look, String label, String level) {
-        if (levelLook != null) return;
+    /** Downloads a variant's video for a saved look from the catalog; it then replaces the saved one (and is deleted). */
+    void setChoice(String look, JSONObject saved, String key) {
+        if (choiceLook != null) return;
         Catalog.Entry found = null;
         if (catalog != null) for (Catalog.Entry e : catalog) if (e.id.equals(look)) found = e;
         Catalog.Entry e;
         try {
-            e = found != null ? found.atLevel(level) : null;
+            e = found != null ? found.atChoice(key) : null;
         } catch (IOException x) {
             e = null;
         }
-        if (e == null || !level.equals(Store.level(e.json))) {
-            Toast.makeText(this, catalog == null ? "Load the catalog first: the " + label.toLowerCase() + " levels come from it"
-                    : "The catalog has no " + level + " " + label.toLowerCase() + " for this look", Toast.LENGTH_LONG).show();
+        String words = Store.choiceLabel(saved, key);
+        if (e == null || !key.equals(e.json.optString("choice"))) {
+            Toast.makeText(this, catalog == null ? "Load the catalog first: the options' videos come from it"
+                    : "The catalog has no " + words + " version of this look", Toast.LENGTH_LONG).show();
             return;
         }
         Catalog.Entry at = e;
-        File dir = new File(getCacheDir(), "level"), file = new File(dir, look + "-" + level + ".mp4");
-        levelLook = look;
-        levelStatus = "Downloading " + level + " (" + Ui.size(this, at.bytes) + ")…";
+        File dir = new File(getCacheDir(), "choice"), file = new File(dir, look + "-" + key + ".mp4");
+        choiceLook = look;
+        choiceStatus = "Downloading " + words + " (" + Ui.size(this, at.bytes) + ")…";
         renderProfiles();
         Ui.NET.execute(() -> {
             String error = null;
             try {
                 dir.mkdirs();
                 Catalog.download(at.video, file, at.sha256, (done, total) -> runOnUiThread(() -> {
-                    levelStatus = "Downloading " + level + ": " + Ui.size(this, done) + " of " + Ui.size(this, at.bytes) + "…";
-                    if (levelNote != null) levelNote.setText(levelStatus);
-                }), () -> gone);
-                store.installLevel(at.json, at.orientation, file);   // dropped if the look was deleted meanwhile
+                    choiceStatus = "Downloading " + words + ": " + Ui.size(this, done) + " of " + Ui.size(this, at.bytes) + "…";
+                    if (choiceNote != null) choiceNote.setText(choiceStatus);
+                }), () -> gone || store.profilesFor(look).isEmpty());   // stops if the look is deleted meanwhile
+                store.installChoice(at.json, at.orientation, file);   // dropped if it was deleted at the last moment
             } catch (IOException x) {
-                error = x.getMessage();
+                if (!store.profilesFor(look).isEmpty()) error = x.getMessage();   // a deleted look: nothing to say
             } finally {
                 file.delete();
             }
             String why = error;
             runOnUiThread(() -> {
-                levelLook = null;
-                levelNote = null;
+                choiceLook = null;
+                choiceNote = null;
                 if (gone) return;
-                if (why != null) Toast.makeText(this, "Couldn't change the " + label.toLowerCase() + ": " + why, Toast.LENGTH_LONG).show();
+                if (why != null) Toast.makeText(this, "Couldn't change the option: " + why, Toast.LENGTH_LONG).show();
                 renderProfiles();
             });
         });
     }
 
-    /** The catalog has another video than the saved one, for the level the look is saved at. */
+    /**
+     * The catalog has another video than the saved one, for the variant the look is saved as (none if the catalog
+     * lacks that variant: its plain videos are another variant, and the update would quietly switch to it).
+     */
     boolean newer(Catalog.Entry e) {
         JSONObject saved = store.scene(e.id);
-        String level = Store.level(saved);
-        String sha = level != null ? Store.videoSha(Store.atLevel(e.json, level), e.orientation) : e.sha256;
+        String key = Store.choice(saved);
+        JSONObject at = key != null ? Store.atChoice(e.json, key) : e.json;
+        if (key != null && !key.equals(at.optString("choice"))) return false;
+        String sha = key != null ? Store.videoSha(at, e.orientation) : e.sha256;
         return Store.isNewer(Store.videoSha(saved, e.orientation), sha);
     }
 
@@ -571,7 +628,7 @@ public class SettingsActivity extends Activity {
         boolean newer = newer(look);
         Catalog.Entry e = look;
         try {
-            e = look.atLevel(Store.level(store.scene(look.id)));   // an update keeps the saved level
+            e = look.atChoice(Store.choice(store.scene(look.id)));   // an update keeps the saved variant
         } catch (IOException x) {
             // the plain videos then
         }
