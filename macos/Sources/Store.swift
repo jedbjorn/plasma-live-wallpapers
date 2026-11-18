@@ -263,6 +263,15 @@ final class Store: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
+    /// A saved look's level knob: its label and the level on disk, or nil for a look without levels.
+    func level(_ look: String) -> (label: String, level: String)? {
+        guard let s = scene(look), let l = s["levels"] as? [String: Any] else { return nil }
+        let label = l["label"] as? String ?? "Level"
+        if let v = s["level"] as? String, levelNames.contains(v) { return (label, v) }
+        let d = l["default"] as? String ?? "strong"
+        return (label, levelNames.contains(d) ? d : "strong")
+    }
+
     func lookTitle(_ look: String) -> String { scene(look)?["title"] as? String ?? look }
 
     func poster(_ look: String) -> URL? {

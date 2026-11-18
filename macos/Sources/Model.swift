@@ -27,6 +27,11 @@ final class Model: ObservableObject {
     private var previewTask: Task<Void, Never>?
     private var catalogTask: Task<Void, Never>?
 
+    // a saved look's level being downloaded (one at a time)
+    @Published private(set) var levelJob: (look: String, level: String)?
+    @Published private(set) var levelProgress: Double = 0
+    private var levelTask: Task<Void, Never>?
+
     /// A video that failed to play; the wallpaper shows the bundled look instead.
     @Published var failedFile: URL?
 
@@ -54,6 +59,7 @@ final class Model: ObservableObject {
                 let list = try await Catalog.fetch(url)
                 guard !Task.isCancelled else { return }
                 catalog = list
+                adoptLevels()
             } catch {
                 guard !Task.isCancelled else { return }
                 catalog = []
@@ -61,6 +67,63 @@ final class Model: ObservableObject {
             }
             catalogLoading = false
         }
+    }
+
+    /// Saved looks without levels whose video is the catalog's default level get the catalog's levels.
+    private func adoptLevels() {
+        var changed = false
+        for e in catalog where store.scene(e.id) != nil && store.level(e.id) == nil {
+            if Catalog.adoptLevels(e, in: store.lookDir(e.id)) { changed = true }
+        }
+        if changed { store.objectWillChange.send() }
+    }
+
+    /// Changes a saved look's level (for every profile of the look): downloads that level's video from the
+    /// catalog in place of the old one.
+    func setLevel(look: String, _ level: String) {
+        guard levelJob == nil, store.level(look)?.level != level else { return }
+        levelJob = (look, level)
+        levelProgress = 0
+        error = nil
+        let url = effectiveCatalogURL
+        levelTask = Task { @MainActor in
+            do {
+                var e = catalog.first { $0.id == look }
+                if e?.levels?.videos[level] == nil {   // not loaded yet, or older than the release
+                    let fresh = try await Catalog.fetch(url)
+                    if effectiveCatalogURL == url { catalog = fresh }
+                    e = fresh.first { $0.id == look }
+                }
+                guard let e else { throw StoreError.message("the catalog has no look \(look)") }
+                do {
+                    try await Catalog.changeLevel(e, to: level, in: store.lookDir(look)) { [weak self] f in
+                        self?.levelProgress = f
+                    }
+                } catch where !(error is CancellationError) && !Task.isCancelled {
+                    // the list may be older than the release: once more with a fresh catalog
+                    let fresh = try await Catalog.fetch(url)
+                    guard let n = fresh.first(where: { $0.id == look }),
+                          n.levels?.videos[level]?.url != e.levels?.videos[level]?.url else { throw error }
+                    if effectiveCatalogURL == url { catalog = fresh }
+                    try await Catalog.changeLevel(n, to: level, in: store.lookDir(look)) { [weak self] f in
+                        self?.levelProgress = f
+                    }
+                }
+                failedFile = nil
+                store.objectWillChange.send()   // the wallpaper picks up the new file
+            } catch {
+                if !(error is CancellationError) && !Task.isCancelled {
+                    self.error = "Couldn't change the \(store.level(look)?.label.lowercased() ?? "level") of "
+                        + "\(store.lookTitle(look)): \(error.localizedDescription)"
+                }
+            }
+            levelJob = nil
+        }
+    }
+
+    func cancelLevel() {
+        levelTask?.cancel()
+        levelTask = nil
     }
 
     func startPreview(_ e: CatalogEntry) {
@@ -71,10 +134,27 @@ final class Model: ObservableObject {
         // a folder per attempt: a cancelled download that is still finishing can't touch the new one
         let dir = store.previewDir.appendingPathComponent("\(e.id)-\(UUID().uuidString.prefix(8))")
         previewDir = dir
+        let catalogURL = effectiveCatalogURL
         previewTask = Task { @MainActor in
+            var e = e
             do {
-                try await Catalog.downloadPreview(e, into: dir) { [weak self] f in
-                    if self?.previewEntry?.id == e.id { self?.previewProgress = f }
+                let id = e.id
+                let progress: (Double) -> Void = { [weak self] f in
+                    if self?.previewEntry?.id == id { self?.previewProgress = f }
+                }
+                do {
+                    try await Catalog.downloadPreview(e, into: dir, progress: progress)
+                } catch where !(error is CancellationError) && !Task.isCancelled {
+                    // The list may be older than the release (a new release can rename or replace a look's
+                    // videos, and the old URLs then 404): fetch the catalog again and retry once if this
+                    // look's video changed.
+                    guard let fresh = try? await Catalog.fetch(catalogURL), !Task.isCancelled,
+                          let n = fresh.first(where: { $0.id == e.id }),
+                          n.video != e.video || n.sha256 != e.sha256 else { throw error }
+                    if effectiveCatalogURL == catalogURL { catalog = fresh }
+                    e = n
+                    if previewDir == dir { previewEntry = n; previewProgress = 0 }
+                    try await Catalog.downloadPreview(e, into: dir, progress: progress)
                 }
                 try Task.checkCancellation()
                 guard previewDir == dir else { throw CancellationError() }

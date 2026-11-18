@@ -28,7 +28,8 @@ struct SettingsView: View {
             .padding(20)
         }
         .frame(minWidth: 620, minHeight: 520)
-        .onAppear { if model.catalog.isEmpty && !model.catalogLoading { model.loadCatalog() } }
+        // every time the window opens: a release since the last load may have renamed or replaced videos
+        .onAppear { if !model.catalogLoading { model.loadCatalog() } }
     }
 }
 
@@ -106,10 +107,28 @@ struct ProfileRow: View {
                     .textFieldStyle(.plain)
                     .font(.headline)
                     .onSubmit { store.rename(profile.id, name) }
-                Text("\(store.lookTitle(profile.look)) · \(humanBytes(store.lookBytes(profile.look)))")
+                if let j = model.levelJob, j.look == profile.look {
+                    HStack(spacing: 6) {
+                        ProgressView(value: model.levelProgress).frame(width: 80).controlSize(.small)
+                        Text("Downloading \(levelLabel(j.level))… \(Int(model.levelProgress * 100))%")
+                        Button("Cancel") { model.cancelLevel() }.buttonStyle(.link)
+                    }
                     .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("\(store.lookTitle(profile.look)) · \(humanBytes(store.lookBytes(profile.look)))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer()
+            if let lv = store.level(profile.look) {
+                Picker(lv.label, selection: Binding(get: { lv.level }, set: { model.setLevel(look: profile.look, $0) })) {
+                    ForEach(levelNames, id: \.self) { l in Text("\(lv.label): \(levelLabel(l))").tag(l) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .disabled(model.levelJob != nil)
+                .help("\(lv.label) (every profile of this look)")
+            }
             Picker("Speed", selection: Binding(get: { profile.speed }, set: { store.setSpeed(profile.id, $0) })) {
                 ForEach(speeds, id: \.self) { s in Text(speedLabel(s)).tag(s) }
             }
