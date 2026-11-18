@@ -71,10 +71,27 @@ final class Model: ObservableObject {
         // a folder per attempt: a cancelled download that is still finishing can't touch the new one
         let dir = store.previewDir.appendingPathComponent("\(e.id)-\(UUID().uuidString.prefix(8))")
         previewDir = dir
+        let catalogURL = effectiveCatalogURL
         previewTask = Task { @MainActor in
+            var e = e
             do {
-                try await Catalog.downloadPreview(e, into: dir) { [weak self] f in
-                    if self?.previewEntry?.id == e.id { self?.previewProgress = f }
+                let id = e.id
+                let progress: (Double) -> Void = { [weak self] f in
+                    if self?.previewEntry?.id == id { self?.previewProgress = f }
+                }
+                do {
+                    try await Catalog.downloadPreview(e, into: dir, progress: progress)
+                } catch where !(error is CancellationError) && !Task.isCancelled {
+                    // The list may be older than the release (a new release can rename or replace a look's
+                    // videos, and the old URLs then 404): fetch the catalog again and retry once if this
+                    // look's video changed.
+                    guard let fresh = try? await Catalog.fetch(catalogURL), !Task.isCancelled,
+                          let n = fresh.first(where: { $0.id == e.id }),
+                          n.video != e.video || n.sha256 != e.sha256 else { throw error }
+                    if effectiveCatalogURL == catalogURL { catalog = fresh }
+                    e = n
+                    if previewDir == dir { previewEntry = n; previewProgress = 0 }
+                    try await Catalog.downloadPreview(e, into: dir, progress: progress)
                 }
                 try Task.checkCancellation()
                 guard previewDir == dir else { throw CancellationError() }
