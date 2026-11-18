@@ -31,7 +31,52 @@ ID_RE = re.compile(r"^[a-z0-9-]+$")
 ANDROID_PACKAGE = "com.designsos.livescenes"
 DEFAULT_CRF = 24
 DEFAULT_PRESET = "slow"
-LEVELS = ("weak", "medium", "strong")   # a look's optional level knob (sdk/FORMAT.md, "Levels")
+VALUE_RE = re.compile(r"^[a-z0-9]+$")   # an option value's id (sdk/FORMAT.md, "Options")
+
+
+def parse_option(spec):
+    """'Twinkle: weak, medium, strong*' (or 'Rain: none=No rain, heavy=Heavy rain*') -> an option; * marks the default."""
+    label, sep, rest = spec.partition(":")
+    if not sep or not label.strip():
+        raise Fail(f"--option wants 'Label: value, value*, ...', got {spec!r}")
+    values, default = [], None
+    for part in (x.strip() for x in rest.split(",")):
+        if not part:
+            continue
+        star = part.endswith("*")
+        vid, eq, vlabel = part.rstrip("*").partition("=")
+        vid, vlabel = vid.strip(), vlabel.strip()
+        if not VALUE_RE.match(vid):
+            raise Fail(f"--option {label.strip()}: value id {vid!r} must match [a-z0-9]+")
+        if any(v["id"] == vid for v in values):
+            raise Fail(f"--option {label.strip()}: value {vid!r} twice")
+        values.append({"id": vid, "label": vlabel if eq and vlabel else vid.capitalize()})
+        if star:
+            default = vid
+    if len(values) < 2:
+        raise Fail(f"--option {label.strip()}: needs at least two values")
+    return {"label": label.strip(), "default": default or values[0]["id"], "values": values}
+
+
+def is_theme_option(o):
+    """An option whose values carry themes: it picks the look's Android theme, not a video (FORMAT.md)."""
+    return bool(o.get("values")) and all(isinstance(v, dict) and "theme" in v for v in o["values"])
+
+
+def video_options(options):
+    return [o for o in options or [] if not is_theme_option(o)]
+
+
+def variant_keys(options):
+    """Every variant key of a look's video options, in order: the value ids of each option joined with '-'."""
+    keys = [""]
+    for o in video_options(options):
+        keys = [f"{k}-{v['id']}" if k else v["id"] for k in keys for v in o["values"]]
+    return keys
+
+
+def default_key(options):
+    return "-".join(o["default"] for o in video_options(options))
 
 
 # --------------------------------------------------------------------------------------------- helpers
@@ -360,8 +405,6 @@ def cmd_pack(a):
         raise Fail("--portrait-rotate makes the portrait video from SRC; it cannot be combined with --portrait")
     if a.portrait_rotate and a.no_portrait:
         raise Fail("--portrait-rotate and --no-portrait contradict each other")
-    if (a.level_label or a.level_default) and not a.level:
-        raise Fail("--level-label and --level-default go with --level")
     out = Path(a.output)
     if out.name != a.id:
         warn(f"the pack folder should be named after its id ({a.id}), not {out.name}")
@@ -375,15 +418,23 @@ def cmd_pack(a):
     if theme is None and prev.get("theme") and not theme_problems(prev["theme"]):   # re-packing: keep its theme
         theme = prev["theme"]
         info(f"keeping the theme of {out}/scene.json: {theme_line(theme)}")
-    levels = None
-    if a.level:                          # one level of the knob; the levels packed before are kept
-        old = prev.get("levels") or {}
-        levels = {"label": a.level_label or old.get("label"),
-                  "default": a.level_default or old.get("default") or "strong",
-                  "videos": dict(old.get("videos") or {})}
-        if not levels["label"]:
-            raise Fail("the first --level needs --level-label: the knob's name in the apps, e.g. Twinkle")
-    suffix = f"-{a.level}" if a.level else ""
+    # options: given with --option, or the pack's own; SRC is one variant of them, the others packed before are kept
+    # (theme options are kept as they are: they come from `livescenes theme`)
+    kept = prev.get("options") or []
+    options = ([parse_option(spec) for spec in a.option] if a.option else video_options(kept)) \
+        + [o for o in kept if is_theme_option(o)]
+    vopts = video_options(options)
+    variants, key = {}, None
+    if vopts:
+        keys = variant_keys(options)
+        key = a.variant or (keys[0] if len(keys) == 1 else None)
+        if key not in keys:
+            raise Fail(f"this look has options: say which variant SRC is with --variant, one of {', '.join(keys)}"
+                       if not a.variant else f"--variant {a.variant} is not one of {', '.join(keys)}")
+        variants = {k: v for k, v in (prev.get("variants") or {}).items() if k in keys}
+    elif a.variant:
+        raise Fail("--variant needs the look's options: give them with --option")
+    suffix = f"-{key}" if key else ""
     src = Source(a.src)
     psrc = Source(a.portrait) if a.portrait else None
 
@@ -420,16 +471,15 @@ def cmd_pack(a):
             foc = encode(src, seek, 0, L, F, w, h, a.portrait_focus or a.focus, a.portrait_crf or a.crf,
                          a.preset, out / f"portrait{suffix}.mp4", "portrait", a.x265, a.portrait_rotate)
         videos["portrait"] = foc
-    # videos no longer described: the other orientation, plain files after level ones and the other way round
+    # videos no longer described: the other orientation, plain files after variant ones and the other way round
     keep = {f"{o}{suffix}.mp4" for o in videos}
-    if levels:
-        keep |= {v["file"] for lv, vs in levels["videos"].items() if lv != a.level for v in vs.values()}
+    keep |= {v["file"] for k, vs in variants.items() if k != key for v in vs.values()}
     for f in out.glob("*.mp4"):
-        if f.name not in keep and re.fullmatch(r"(landscape|portrait)(-[a-z]+)?\.mp4", f.name):
+        if f.name not in keep and re.fullmatch(r"(landscape|portrait)(-[a-z0-9-]+)?\.mp4", f.name):
             f.unlink()
 
-    # the poster shows the default level (another level only until the default one is packed)
-    if not levels or a.level == levels["default"] or not (out / "poster.jpg").is_file():
+    # the poster shows the default variant (another one only until the default is packed)
+    if not vopts or key == default_key(options) or not (out / "poster.jpg").is_file():
         poster_src = out / (f"landscape{suffix}.mp4" if "landscape" in videos else f"portrait{suffix}.mp4")
         pt = min(max(a.poster_time, 0), (L - 1) / FPS)
         run([tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{pt:.3f}", "-i", str(poster_src),
@@ -450,20 +500,23 @@ def cmd_pack(a):
         if orient == "portrait" and a.portrait_rotate:
             scene["videos"][orient]["rotate"] = ROTATIONS[a.portrait_rotate][0]
     packed = scene["videos"]
-    if levels:
-        levels["videos"][a.level] = packed
-        levels["videos"] = {lv: levels["videos"][lv] for lv in LEVELS if lv in levels["videos"]}
-        scene["videos"] = levels["videos"].get(levels["default"], packed)   # always the default level's
-        scene["levels"] = levels
+    if options:
+        scene["options"] = options
+    if vopts:
+        variants[key] = packed
+        variants = {k: variants[k] for k in variant_keys(options) if k in variants}
+        scene["videos"] = variants.get(default_key(options), packed)   # always the default variant's
+        scene["variants"] = variants
     if theme:
         scene["theme"] = theme
     write_json(out / "scene.json", scene)
     info(f"\npack written: {out}/  (loop {scene['loop']} s)")
     for orient, v in packed.items():
         info(f"  {v['file']:<20} {v['width']}x{v['height']}  {human(v['bytes'])}  focus {v['focus']}")
-    if levels:
-        todo = [lv for lv in LEVELS if lv not in levels["videos"]]
-        info(f"  level {a.level} of {levels['label']} (default {levels['default']})"
+    if vopts:
+        todo = [k for k in variant_keys(options) if k not in variants]
+        info(f"  variant {key} of " + "; ".join(o["label"] + ": " + ", ".join(v["id"] for v in o["values"])
+                                              for o in vopts) + f" (default {default_key(options)})"
              + (f"; still to pack: {', '.join(todo)}" if todo else ""))
     info("  poster.jpg")
     if theme:
@@ -621,29 +674,53 @@ def check_video(c, pack, orient, v, loop, label=None):
     seam_check(c, f, label, w, h, [round(t * FPS) for t in keys])
 
 
-def check_levels(c, pack, scene, loop):
-    """The level knob: a label, a default, and the videos of all three levels (the plain videos are the default's)."""
-    lv = scene["levels"]
-    if not c.ok(isinstance(lv, dict), "levels is an object"):
+def check_options(c, pack, scene, loop):
+    """Options: rows of values; a variant (videos) for every combination; the plain videos are the default's."""
+    opts = scene["options"]
+    if not c.ok(isinstance(opts, list) and opts, "options is a non-empty list"):
         return
-    c.ok(isinstance(lv.get("label"), str) and lv["label"].strip() != "", "levels.label is set", repr(lv.get("label")))
-    c.ok(lv.get("default") in LEVELS, f"levels.default is one of {', '.join(LEVELS)}", repr(lv.get("default")))
-    vids = lv.get("videos")
-    if not c.ok(isinstance(vids, dict) and set(vids) == set(LEVELS), f"levels.videos has {', '.join(LEVELS)}",
-                str(list(vids) if isinstance(vids, dict) else vids)):
+    good = True
+    for n, o in enumerate(opts, 1):
+        vals = o.get("values") if isinstance(o, dict) else None
+        ok = (isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"].strip() != ""
+              and isinstance(vals, list) and len(vals) >= 2
+              and all(isinstance(v, dict) and isinstance(v.get("id"), str) and VALUE_RE.match(v["id"])
+                      and isinstance(v.get("label"), str) and v["label"].strip() for v in vals)
+              and len({v["id"] for v in vals}) == len(vals)
+              and o.get("default") in {v["id"] for v in vals})
+        good &= c.ok(ok, f"option {n}: a label, two or more values (unique [a-z0-9]+ ids with labels), "
+                         "a default among them", json.dumps(o)[:120])
+        if ok and any("theme" in v for v in vals):
+            problems = [f"{v['id']}: {p}" for v in vals for p in (theme_problems(v["theme"]) if "theme" in v
+                                                                   else ["no theme"])]
+            good &= c.ok(not problems, f"option {n} ({o['label']}): every value has a valid theme", "; ".join(problems))
+    if not good:
         return
-    c.ok(vids.get(lv.get("default")) == scene["videos"], "videos are the default level's")
-    for level in LEVELS:
-        vs = vids[level]
+    for o in opts:
+        if is_theme_option(o):
+            dv = next(v for v in o["values"] if v["id"] == o["default"])
+            c.ok(scene.get("theme") == dv["theme"], f"theme is the default {o['label']}'s ({o['default']})")
+    if not video_options(opts):
+        c.ok("variants" not in scene, "no variants without video options")
+        return
+    keys = variant_keys(opts)
+    vars_ = scene.get("variants")
+    if not c.ok(isinstance(vars_, dict) and set(vars_) == set(keys), f"variants has every combination: {', '.join(keys)}",
+                str(list(vars_) if isinstance(vars_, dict) else vars_)):
+        return
+    dk = default_key(opts)
+    c.ok(vars_.get(dk) == scene["videos"], f"videos are the default variant's ({dk})")
+    for k in keys:
+        vs = vars_[k]
         if not c.ok(isinstance(vs, dict) and set(vs) == set(scene["videos"]),
-                    f"{level}: the same orientations as videos", str(list(vs) if isinstance(vs, dict) else vs)):
+                    f"{k}: the same orientations as videos", str(list(vs) if isinstance(vs, dict) else vs)):
             continue
-        if level == lv.get("default"):
+        if k == dk:
             continue                                  # checked as the plain videos
         for orient, v in vs.items():
-            if c.ok(isinstance(v, dict) and all(k in v for k in ("file", "width", "height", "fps", "bytes", "sha256")),
-                    f"{level} {orient}: has file, width, height, fps, bytes, sha256"):
-                check_video(c, pack, orient, v, loop, f"{level} {orient}")
+            if c.ok(isinstance(v, dict) and all(x in v for x in ("file", "width", "height", "fps", "bytes", "sha256")),
+                    f"{k} {orient}: has file, width, height, fps, bytes, sha256"):
+                check_video(c, pack, orient, v, loop, f"{k} {orient}")
 
 
 def cmd_check(a):
@@ -683,8 +760,8 @@ def cmd_check(a):
             if c.ok(isinstance(v, dict) and all(k in v for k in ("file", "width", "height", "fps", "bytes", "sha256")),
                     f"{orient}: has file, width, height, fps, bytes, sha256"):
                 check_video(c, pack, orient, v, loop)
-    if "levels" in scene:
-        check_levels(c, pack, scene, loop)
+    if "options" in scene:
+        check_options(c, pack, scene, loop)
     if "theme" in scene:
         problems = theme_problems(scene["theme"])
         if c.ok(not problems, "theme is valid", "; ".join(problems)):
@@ -756,7 +833,7 @@ def add_android(pack, scene):
         warn(f"{ANDROID_PACKAGE} does not seem to be installed on the device")
     dest = f"/sdcard/Android/data/{ANDROID_PACKAGE}/files/import/{sid}"
     run([adb, "shell", "mkdir", "-p", dest])
-    # the plain videos (a look with levels: its default level's); the app keeps the one the phone needs
+    # the plain videos (a look with options: its default variant's); the app keeps the one the phone needs
     files = [v["file"] for v in scene["videos"].values() if (pack / v["file"]).is_file()]
     files += [f for f in ("poster.jpg",) if (pack / f).is_file()] + ["scene.json"]
     for f in files:                                   # scene.json last: the pack is complete once it appears
@@ -787,8 +864,8 @@ def cmd_add(a):
     root = data_dir()
     look = root / "looks" / sid
     look.mkdir(parents=True, exist_ok=True)
-    level = scene["levels"]["default"] if scene.get("levels") else None
-    name = f"{orient}-{level}.mp4" if level else f"{orient}.mp4"
+    key = default_key(scene["options"]) if video_options(scene.get("options")) else None
+    name = f"{orient}-{key}.mp4" if key else f"{orient}.mp4"
     tmp = look / f".{name}.part"
     shutil.copyfile(src, tmp)
     os.replace(tmp, look / name)
@@ -799,8 +876,9 @@ def cmd_add(a):
         shutil.copyfile(pack / "poster.jpg", look / "poster.jpg")
     saved = dict(scene)
     saved["videos"] = {orient: dict(v, file=name)}    # only the file that is on this device
-    if level:
-        saved["level"] = level
+    saved.pop("variants", None)
+    if key:
+        saved["choice"] = key
     write_json(look / "scene.json", saved)
 
     pf = root / "profiles.json"
@@ -836,6 +914,34 @@ def cmd_add(a):
 def cmd_theme(a):
     pack = Path(a.packdir)
     scene = load_scene(pack)
+    if (a.option or a.value or a.default) and not (a.option and a.value and a.set):
+        raise Fail("a theme option value needs --option LABEL --value ID[=Label] --set COLORS")
+    if a.option:
+        # one value of a theme option (FORMAT.md "Theme options"): the user picks the look's theme in the app
+        vid, _, vlabel = a.value.partition("=")
+        vid, vlabel = vid.strip(), vlabel.strip() or vid.strip().capitalize()
+        if not VALUE_RE.match(vid):
+            raise Fail(f"--value {vid!r} must match [a-z0-9]+")
+        options = scene.setdefault("options", [])
+        o = next((x for x in options if x.get("label") == a.option), None)
+        if o is None:
+            o = {"label": a.option, "default": vid, "values": []}
+            options.append(o)
+        elif not is_theme_option(o):
+            raise Fail(f"option {a.option!r} chooses videos, not themes")
+        theme = parse_theme(a.set, a.light, a.style)
+        v = next((x for x in o["values"] if x["id"] == vid), None)
+        if v is None:
+            o["values"].append({"id": vid, "label": vlabel, "theme": theme})
+        else:
+            v.update(label=vlabel if "=" in a.value else v["label"], theme=theme)
+        if a.default:
+            o["default"] = vid
+        scene["theme"] = next(x for x in o["values"] if x["id"] == o["default"])["theme"]
+        write_json(pack / "scene.json", scene)
+        info(f"{scene['id']}: {a.option} = {vid} ({vlabel}): theme {theme_line(theme)}"
+             + ("" if len(o["values"]) > 1 else f"\n  add at least one more value to {a.option}"))
+        return 0
     if a.set:
         scene["theme"] = parse_theme(a.set, a.light, a.style)
         write_json(pack / "scene.json", scene)
@@ -881,18 +987,18 @@ def cmd_catalog(a):
         if (pack / "poster.jpg").is_file():
             copy_asset(pack / "poster.jpg", rel / f"{sid}-poster.jpg")
             entry["poster"] = f"{sid}-poster.jpg"
-        lv = scene.get("levels")
-        if lv:
-            # every level's videos as <id>-<orientation>-<level>.mp4; the plain videos are the default level's
-            entry["levels"] = {"label": lv["label"], "default": lv["default"],
-                               "videos": {level: catalog_videos(pack, sid, vs, rel, f"-{level}")
-                                          for level, vs in lv["videos"].items()}}
-            entry["videos"] = entry["levels"]["videos"][lv["default"]]
+        opts = scene.get("options")
+        if opts:
+            entry["options"] = opts
+        if video_options(opts):
+            # every variant's videos as <id>-<orientation>-<key>.mp4; the plain videos are the default variant's
+            entry["variants"] = {k: catalog_videos(pack, sid, vs, rel, f"-{k}") for k, vs in scene["variants"].items()}
+            entry["videos"] = entry["variants"][default_key(opts)]
         else:
             entry["videos"] = catalog_videos(pack, sid, scene["videos"], rel, "")
         looks = [l for l in looks if l.get("id") != sid] + [entry]
-        for level, vs in (entry["levels"]["videos"].items() if lv else [("", entry["videos"])]):
-            info(f"{sid}{' ' + level if level else ''}: " + ", ".join(f"{o} {human(e['bytes'])}" for o, e in vs.items()))
+        for k, vs in (entry["variants"].items() if "variants" in entry else [("", entry["videos"])]):
+            info(f"{sid}{' ' + k if k else ''}: " + ", ".join(f"{o} {human(e['bytes'])}" for o, e in vs.items()))
     write_json(cat_path, {"format": FORMAT_VERSION, "looks": looks})
     info(f"\nwrote {cat_path} ({len(looks)} looks). Upload everything in {rel}/ as release assets.")
 
@@ -954,9 +1060,9 @@ Footage is resampled to 30 fps, encoded as HEVC (H.265) Main 8-bit, and HDR foot
 The focus point is also stored in scene.json so players cropping the video for other screen shapes
 keep it in view.
 
-Levels: a look may have one knob with three levels (weak, medium, strong), e.g. how strongly lights
-twinkle. Each level is its own render of the same loop, packed with --level into the same folder; the
-apps download only the level the user picks (--level-default first)."""
+Options: a look may offer choices, e.g. how strongly lights twinkle (--option, one per row in the apps).
+Every combination of values is a variant: its own render of the same loop, packed with --variant into
+the same folder. The apps download only the variant the user picks (the defaults first)."""
 
 PACK_EPILOG = """examples:
   # 20 s phone clip, use 15 s of it, crossfade 2 s, keep the subject (left third) in the portrait crop
@@ -972,11 +1078,15 @@ PACK_EPILOG = """examples:
   # desktop only
   livescenes pack ae-export.mov --no-portrait -o packs/grid --id grid --title Grid
 
-  # a level knob: three renders of the same loop, the user picks one in the apps (only it is downloaded)
+  # an option: three renders of the same loop, the user picks one in the apps (only it is downloaded)
   livescenes pack glow-3.mkv --portrait glow-3p.mkv --fade 0 -o packs/glow --id glow --title Glow \\
-      --level strong --level-label Glow --level-default strong
-  livescenes pack glow-2.mkv --portrait glow-2p.mkv --fade 0 -o packs/glow --id glow --title Glow --level medium
-  livescenes pack glow-1.mkv --portrait glow-1p.mkv --fade 0 -o packs/glow --id glow --title Glow --level weak"""
+      --option 'Glow: weak, medium, strong*' --variant strong
+  livescenes pack glow-2.mkv --portrait glow-2p.mkv --fade 0 -o packs/glow --id glow --title Glow --variant medium
+  livescenes pack glow-1.mkv --portrait glow-1p.mkv --fade 0 -o packs/glow --id glow --title Glow --variant weak
+
+  # two options: a variant per combination, keys joined with '-' (strong-heavy, weak-none, ...)
+  livescenes pack rain-sh.mkv ... --option 'Twinkle: weak, strong*' --option 'Rain: none=No rain, heavy*' \\
+      --variant strong-heavy"""
 
 
 def build_parser():
@@ -1033,14 +1143,14 @@ def build_parser():
                    help="with --theme: the look is light (dark text suits it); looks are dark by default")
     p.add_argument("--theme-style", choices=STYLES, metavar="STYLE",
                    help="with --theme: the Material You style that suits the look (" + ", ".join(STYLES) + ")")
-    p.add_argument("--level", choices=LEVELS,
-                   help="pack SRC as one level of the look's level knob (weak, medium or strong: three renders of "
-                        "the same loop, e.g. a weaker or stronger effect): writes landscape-LEVEL.mp4 and "
-                        "portrait-LEVEL.mp4 and keeps the levels packed before. Pack all three into the same OUTDIR")
-    p.add_argument("--level-label", metavar="TEXT",
-                   help="with --level: the knob's name in the apps, e.g. Twinkle (needed once)")
-    p.add_argument("--level-default", choices=LEVELS,
-                   help="with --level: the level the apps download first, and the poster's (default strong)")
+    p.add_argument("--option", action="append", default=[], metavar="'LABEL: v1, v2*, ...'",
+                   help="a choice the user makes for the look, one row in the apps (repeat for more rows, in "
+                        "order). Values are ids [a-z0-9]+, shown capitalized, or id=Label; * marks the default "
+                        "(else the first). Needed once: later packs into OUTDIR keep the options")
+    p.add_argument("--variant", metavar="KEY",
+                   help="the variant SRC is: its value ids in option order joined with '-' (e.g. strong, or "
+                        "strong-heavy for two options). Writes landscape-KEY.mp4 and portrait-KEY.mp4 and keeps "
+                        "the variants packed before. Pack every combination into the same OUTDIR")
 
     p = sub.add_parser("check", help="validate a look pack: format, encoding, checksums, loop seam",
                        description="Validate a look pack against sdk/FORMAT.md: scene.json fields, video codec, "
@@ -1059,13 +1169,22 @@ def build_parser():
                        epilog="examples:\n  livescenes theme packs/embers\n"
                        "  livescenes theme packs/embers --set '#c0174a,#5e1a5c,#ff7a30'\n"
                        "  livescenes theme packs/sketch --set '#8a94a6,#d7d2c4' --style MONOCHROMATIC\n"
-                       "  livescenes theme packs/hall --set scenes-src/hall/theme.json",
+                       "  livescenes theme packs/hall --set scenes-src/hall/theme.json\n"
+                       "  # a theme option: the user picks the colors in the app (the first value is the default)\n"
+                       "  livescenes theme packs/wave --option Color --value indigo --set '#3f63c8,#8ebdb6'\n"
+                       "  livescenes theme packs/wave --option Color --value seafoam --set '#6fbfa8,#3f63c8'",
                        formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("packdir", metavar="PACKDIR")
     p.add_argument("--set", metavar="COLORS|FILE",
                    help="'#primary[,#secondary[,#tertiary]]', or a JSON file with a theme (or a scene.json)")
     p.add_argument("--light", action="store_true", help="the look is light (dark text suits it)")
     p.add_argument("--style", choices=STYLES, metavar="STYLE", help="Material You style: " + ", ".join(STYLES))
+    p.add_argument("--option", metavar="LABEL",
+                   help="with --value and --set: add or change a value of the look's theme option LABEL (a row in "
+                        "the Android app that picks the look's theme; made on first use)")
+    p.add_argument("--value", metavar="ID[=Label]", help="with --option: the value's id ([a-z0-9]+) and label")
+    p.add_argument("--default", action="store_true",
+                   help="with --option: make this value the default (else the option's first value is)")
 
     p = sub.add_parser("add", help="install a pack here, or push it to an Android phone",
                        description="Install a look pack on this computer: its landscape video, poster and "
@@ -1081,8 +1200,8 @@ def build_parser():
 
     p = sub.add_parser("catalog", help="write release assets and catalog.json for one or more packs",
                        description="Copy the packs' files into RELEASEDIR as flat release assets "
-                       "(<id>-landscape.mp4, <id>-portrait.mp4, <id>-poster.jpg; a look with levels has "
-                       "<id>-landscape-<level>.mp4 and so on for each level) and write catalog.json with "
+                       "(<id>-landscape.mp4, <id>-portrait.mp4, <id>-poster.jpg; a look with options has "
+                       "<id>-landscape-<key>.mp4 and so on for each variant) and write catalog.json with "
                        "URLs relative to it. Upload the folder's contents as GitHub Release assets (or to any web "
                        "server) and point the apps' catalog URL at catalog.json.",
                        formatter_class=argparse.RawDescriptionHelpFormatter)
