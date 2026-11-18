@@ -39,6 +39,8 @@ https://github.com/user-attachments/assets/c4362d1e-b1f9-44e8-b46b-99c9e87d04bd
 - **Window Seat**: pixel art of a rainy city window at night; a black cat hops up onto the sill, watches the city for a while, stretches and wanders off along the desk. Phones get a closer layout of their own on the right side of the picture.
 - **Circuit**: a circuit board that draws itself trace by trace behind small blue tracer lights, then lets them take it back.
 - **Under the Wave**: a great wave builds and breaks over a little schooner, which capsizes, bobs keel-up, rights herself and sails on. Two options: Frame (Inside the circle, or Breaks out, with the wave and the ship leaving the circle) and Color (an Indigo or Seafoam theme on Android).
+- **Hand in Hand**: an ink drawing of a giant in a diving suit and the little girl whose hand he holds, skipping across old paper with ink flying at every landing; they jump round and skip back out. On phones the picture is turned sideways, like Smoke Signal.
+- **Blue Visitor**: a pale girl with glowing eyes in the dark; a blue butterfly flutters down onto her finger, she turns to stare at you, it flies off and she looks back. Phones get a tall layout of their own.
 
 The looks were made once from animated web pages, which are kept in [`scenes-src/`](scenes-src/) as their source; `sdk/capture` records such a page frame by frame into a perfect loop for `livescenes pack`. The apps no longer render anything live.
 
