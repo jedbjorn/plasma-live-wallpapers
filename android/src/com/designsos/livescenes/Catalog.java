@@ -35,9 +35,9 @@ final class Catalog {
         URL base;                 // the catalog's URL
         String want;              // the device's orientation
 
-        /** This look at a level (FORMAT.md "Levels"): json, video, bytes and sha256 are that level's. */
-        Entry atLevel(String level) throws IOException {
-            return level == null ? this : entry(Store.atLevel(json, level), base, want);
+        /** This look as a variant (FORMAT.md "Options"): json, video, bytes and sha256 are that variant's. */
+        Entry atChoice(String key) throws IOException {
+            return key == null ? this : entry(Store.atChoice(json, key), base, want);
         }
     }
 

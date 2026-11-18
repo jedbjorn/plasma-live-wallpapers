@@ -7,7 +7,7 @@ import android.util.Log;
 import java.io.File;
 
 /**
- * Process start: clears previews and level downloads left over from an earlier run (sdk/FORMAT.md), the APK of an update
+ * Process start: clears previews and option downloads left over from an earlier run (sdk/FORMAT.md), the APK of an update
  * (installed or abandoned by now), and settings of the old WebView version.
  */
 public class App extends Application {
@@ -20,7 +20,7 @@ public class App extends Application {
         Store.deleteTree(preview);
         if (n > 0) Log.i(LiveWallpaperService.TAG, "cleared " + n + " bytes of old previews");
         Store.deleteTree(Update.dir(this));
-        Store.deleteTree(new File(getCacheDir(), "level"));   // a level download cut short
+        Store.deleteTree(new File(getCacheDir(), "choice"));   // an option download cut short
 
         SharedPreferences p = new Prefs(this).p;
         if (p.contains("scene") || p.contains("fps")) {

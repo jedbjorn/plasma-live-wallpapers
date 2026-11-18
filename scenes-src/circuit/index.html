@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Circuit</title></head>
+<body>
+<script src="common.js"></script>
+<script>
+// Circuit. A circuit board draws itself. The drawing starts at the via on the heavy rail
+// and spreads over the board, every net growing from its nearer end as the wave reaches it, with a
+// small light at its tip that leaves the copper behind it. The full board rests, then the lights run
+// back and take the copper with them. reveal.png (tools/trace.py) holds each pixel's draw time.
+Concept.run({
+  L: 56,
+  landscape: { focus: [960, 540] },
+  portrait: { focus: [960, 540], rotate: true },
+  textures: { uRev: 'reveal.png' },
+  frag: `
+const float DRAW = 20.0, EMPTY = 1.5;      // seconds; the rest of the loop is the full board
+const float EDGE = 0.0024;                 // softness of the drawing tip, in shares of the drawing
+const float TAIL = 0.011;                  // length of the light behind the tip
+const vec3 LIGHT = vec3(0.30, 0.62, 0.74);
+vec3 scene(vec2 p){
+  // the loop starts in the middle of the rest: full, undraw, empty, draw, full
+  float full = uL - 2.0*DRAW - EMPTY;
+  float t = uT - 0.5*full;
+  float q = t < DRAW ? 1.0 - t/DRAW : (t < DRAW + EMPTY ? 0.0 : (t - DRAW - EMPTY)/DRAW);
+  q = clamp(q, 0.0, 1.0);
+  q = mix(q, q*q*(3.0 - 2.0*q), 0.5);                   // sets off and arrives gently
+  q = q*(1.0 + 8.0*TAIL) - EDGE;                        // runs past the end so the last lights fade out
+  vec3 src = img(p);
+  float w = when(p);
+  float a = smoothstep(0.0, EDGE, q - w);
+  float copper = clamp(dot(src - BG, vec3(1.0))*255.0/50.0, 0.0, 1.0);
+  float head = exp(-max(q - w, 0.0)/TAIL);
+  return mix(BG, src, a) + a*copper*head*LIGHT*0.5;
+}`
+});
+</script>
+</body></html>

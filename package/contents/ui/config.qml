@@ -46,8 +46,8 @@ ColumnLayout {
     property var progress: ({ state: "", bytes: 0, message: "", file: "" })
     property bool saving: false
 
-    // a saved look's level being downloaded: { id, level, kind, video, scene, bytes }
-    property var levelJob: null
+    // a saved look's variant being downloaded (an option changed): { id, choice, kind, video, scene, bytes }
+    property var choiceJob: null
 
     // updates of the plugin itself: the installed version (metadata.json on disk), the newer release
     // if there is one ({ version, notes, url, sha256, bytes }), and what is going on
@@ -66,6 +66,28 @@ ColumnLayout {
     Helper {
         id: helper
     }
+
+    // option rows line up across all profiles: one width for their labels and one for their boxes
+    FontMetrics {
+        id: optionMetrics
+        font: Kirigami.Theme.smallFont
+    }
+    FontMetrics {
+        id: boxMetrics
+    }
+    readonly property var savedOptions: {
+        const all = [];
+        const looks = page.store ? page.store.looks : {};
+        for (const id in looks)
+            for (const o of (Store.options(looks[id].scene.options) || []))
+                all.push(o);
+        return all;
+    }
+    readonly property real optionLabelWidth: Math.ceil(Math.max(0, ...savedOptions.map(
+        o => optionMetrics.advanceWidth(String(o.label || ""))))) + Kirigami.Units.smallSpacing
+    readonly property real optionBoxWidth: Math.max(Kirigami.Units.gridUnit * 7, Math.ceil(Math.max(0, ...savedOptions.map(
+        o => Math.max(...o.values.map(v => boxMetrics.advanceWidth(String(v.label || v.id)))))))
+        + Kirigami.Units.gridUnit * 3)
 
     // ---------------------------------------------------------------- logic
 
@@ -191,18 +213,19 @@ ColumnLayout {
     }
 
     // a catalog entry with resolved URLs and the video a desktop downloads (landscape, else portrait);
-    // a look with levels also has levels: { label, default, raw, videos: { <level>: video } }
+    // a look with options also has options: { list (its video options), raw, default: <variant key>,
+    // videos: { <key>: video } }
     function catalogLook(l, base) {
         if (!l || !Store.validId(l.id) || !l.videos)
             return null;
         const pick = catalogVideo(l.videos, base);
-        let levels = null;
-        if (l.levels && l.levels.videos) {
-            levels = { label: String(l.levels.label || "Level"), "default": Store.level({ levels: l.levels }),
-                       raw: l.levels, videos: {} };
-            for (const lv of Store.LEVELS) {
-                const p = catalogVideo(l.levels.videos[lv] || {}, base);
-                levels.videos[lv] = p.kind === pick.kind ? p.video : null;
+        const list = Store.options(l.options);
+        let options = null;
+        if (list && l.variants) {
+            options = { list: list, raw: l.options, "default": Store.defaultKey(list), videos: {} };
+            for (const k in l.variants) {
+                const p = catalogVideo(l.variants[k] || {}, base);
+                options.videos[k] = p.kind === pick.kind ? p.video : null;
             }
         }
         return {
@@ -215,7 +238,7 @@ ColumnLayout {
             posterUrl: l.poster ? Store.resolveUrl(base, l.poster) : "",
             kind: pick.kind,
             video: pick.video,
-            levels: levels
+            options: options
         };
     }
 
@@ -283,14 +306,14 @@ ColumnLayout {
         const look = page.preview;
         if (!look || page.progress.state !== "done")
             return;
-        // a look with levels is saved at its default level (the plain videos), its file named after it
-        const file = look.kind + (look.levels ? "-" + look.levels["default"] : "") + ".mp4";
+        // a look with options is saved as its default variant (the plain videos), its file named after it
+        const file = look.kind + (look.options ? "-" + look.options["default"] : "") + ".mp4";
         const scene = { format: 1, id: look.id, title: look.title, author: look.author, license: look.license,
                         description: look.description, loop: look.loop, videos: {} };
         scene.videos[look.kind] = savedEntry(look.video, file);
-        if (look.levels) {
-            scene.levels = look.levels.raw;
-            scene.level = look.levels["default"];
+        if (look.options) {
+            scene.options = look.options.raw;   // theme options too, as the catalog has them
+            scene.choice = look.options["default"];
         }
         const name = previewName.text.trim() || look.title;
         const speed = Store.SPEEDS[previewSpeed.currentIndex];
@@ -308,44 +331,46 @@ ColumnLayout {
         });
     }
 
-    // Change a saved look's level: download that level's video from the catalog (as a preview), then
-    // it replaces the saved one, which is deleted. Every profile of the look plays the new level.
-    function setLevel(lookId, level) {
+    // Change a saved look's variant (one of its options changed): download that variant's video from the
+    // catalog (as a preview), then it replaces the saved one, which is deleted. Every profile of the look
+    // plays the new variant.
+    function setChoice(lookId, key) {
         const saved = page.store ? page.store.looks[lookId] : null;
         const c = page.catalog.find(l => l.id === lookId);
-        const v = c && c.levels ? c.levels.videos[level] : null;
-        if (!saved || page.levelJob)
+        const v = c && c.options ? c.options.videos[key] : null;
+        if (!saved || page.choiceJob)
             return;
         if (!v) {
-            page.error = c ? "The catalog has no " + level + " level of " + c.title + "."
-                           : "Load the catalog first: the levels come from it.";
+            page.error = c ? "The catalog has no " + Store.choiceLabel(c.options ? c.options.list : saved.scene.options, key)
+                             + " version of " + c.title + "."
+                           : "Load the catalog first: the options' videos come from it.";
             return;
         }
-        page.levelJob = { id: lookId, level: level, kind: c.kind, video: v, scene: saved.scene, bytes: 0 };
+        page.choiceJob = { id: lookId, choice: key, kind: c.kind, video: v, scene: saved.scene, bytes: 0 };
         helper.run(["fetch", lookId, c.kind, v.url, v.sha256, String(v.bytes)], out => {
             const r = Store.parseJson(out);
             if (!r || !r.ok)
-                page.levelFailed(r && r.error ? r.error : out);
+                page.choiceFailed(r && r.error ? r.error : out);
         });
     }
 
-    function levelFailed(message) {
-        if (page.levelJob)
-            page.error = "Cannot change the level: " + message;
-        page.levelJob = null;
+    function choiceFailed(message) {
+        if (page.choiceJob)
+            page.error = "Cannot change the option: " + message;
+        page.choiceJob = null;
     }
 
-    function pollLevel() {
-        const job = page.levelJob;
+    function pollChoice() {
+        const job = page.choiceJob;
         if (!job || job.saving)
             return;
         helper.run(["progress", job.id], out => {
             const r = Store.parseJson(out);
-            if (page.levelJob !== job || !r || job.saving)
+            if (page.choiceJob !== job || !r || job.saving)
                 return;                              // another reply already started the save
             if (r.state === "error" || r.state === "none") {
                 helper.run(["discard", job.id]);
-                page.levelFailed(r.message || "the download was removed");
+                page.choiceFailed(r.message || "the download was removed");
             } else if (r.state === "done") {
                 job.saving = true;
                 helper.run(["state"], out => {
@@ -353,27 +378,27 @@ ColumnLayout {
                     const st = Store.parseState(out);
                     if (!st.ok || !st.looks[job.id] || Store.profilesUsing(st, job.id).length === 0) {
                         helper.run(["discard", job.id]);
-                        page.levelJob = null;
+                        page.choiceJob = null;
                         return;
                     }
-                    const file = job.kind + "-" + job.level + ".mp4";
+                    const file = job.kind + "-" + job.choice + ".mp4";
                     const scene = JSON.parse(JSON.stringify(job.scene));
-                    scene.level = job.level;
+                    scene.choice = job.choice;
                     scene.videos = {};
                     scene.videos[job.kind] = page.savedEntry(job.video, file);
                     helper.run(["save", job.id, JSON.stringify(scene, null, 2), file], res => {
                         const s = Store.parseJson(res);
                         if (!s || !s.ok) {
                             helper.run(["discard", job.id]);
-                            page.levelFailed(s && s.error ? s.error : res);
+                            page.choiceFailed(s && s.error ? s.error : res);
                             return;
                         }
-                        page.levelJob = null;
+                        page.choiceJob = null;
                         page.editProfiles(raw => {});    // rewriting profiles.json makes the wallpapers re-read the looks
                     });
                 });
             } else if (r.bytes !== job.bytes) {
-                page.levelJob = Object.assign({}, job, { bytes: r.bytes });
+                page.choiceJob = Object.assign({}, job, { bytes: r.bytes });
             }
         });
     }
@@ -446,8 +471,8 @@ ColumnLayout {
     Timer {
         interval: 400
         repeat: true
-        running: page.levelJob !== null
-        onTriggered: page.pollLevel()
+        running: page.choiceJob !== null
+        onTriggered: page.pollChoice()
     }
 
     // profiles.json changed elsewhere (another screen's settings, `livescenes add`): show it
@@ -469,8 +494,8 @@ ColumnLayout {
     Component.onDestruction: {
         if (page.preview)
             helper.run(["discard", page.preview.id]);
-        if (page.levelJob && !page.levelJob.saving)
-            helper.run(["discard", page.levelJob.id]);
+        if (page.choiceJob && !page.choiceJob.saving)
+            helper.run(["discard", page.choiceJob.id]);
     }
 
     // ---------------------------------------------------------------- profiles
@@ -645,9 +670,10 @@ ColumnLayout {
                 QQC2.Label {
                     Layout.fillWidth: true
                     text: {
-                        const job = page.levelJob;
+                        const job = page.choiceJob;
                         if (job && job.id === row.modelData.look)
-                            return "Downloading " + job.level + ": " + Store.formatBytes(job.bytes) + " of "
+                            return "Downloading " + Store.choiceLabel(job.scene.options, job.choice) + ": "
+                                + Store.formatBytes(job.bytes) + " of "
                                 + Store.formatBytes(job.video.bytes) + "…";
                         return Store.lookTitle(page.store, row.modelData.look)
                             + (row.look ? " · " + Store.formatBytes(row.look.bytes) : " · missing")
@@ -657,26 +683,43 @@ ColumnLayout {
                     opacity: 0.7
                     elide: Text.ElideRight
                 }
-            }
 
-            // the look's level knob (sdk/FORMAT.md, "Levels"): shared by every profile of the look
-            QQC2.ComboBox {
-                readonly property var levels: row.look && row.look.scene.levels ? row.look.scene.levels : null
-                visible: levels !== null
-                enabled: page.levelJob === null
-                model: Store.LEVELS.map(Store.levelLabel)
-                displayText: (levels ? String(levels.label || "Level") + ": " : "") + currentText
-                // the saved level until the new one is in place
-                currentIndex: Math.max(0, Store.LEVELS.indexOf(Store.level(row.look ? row.look.scene : null)))
-                onActivated: index => {
-                    const level = Store.LEVELS[index];
-                    currentIndex = Qt.binding(() => Math.max(0, Store.LEVELS.indexOf(Store.level(row.look ? row.look.scene : null))));
-                    if (level !== Store.level(row.look.scene))
-                        page.setLevel(row.modelData.look, level);
+                // the look's options (sdk/FORMAT.md, "Options"), one row each, drawn from its scene.json;
+                // shared by every profile of the look
+                Repeater {
+                    model: row.look ? (Store.options(row.look.scene.options) || []) : []
+                    delegate: RowLayout {
+                        id: option
+                        required property var modelData
+                        required property int index
+                        readonly property string key: Store.choice(row.look ? row.look.scene : null)
+                        readonly property int chosen: Math.max(0, modelData.values.findIndex(
+                                                                   v => v.id === key.split("-")[index]))
+                        spacing: Kirigami.Units.smallSpacing
+                        QQC2.Label {
+                            Layout.preferredWidth: page.optionLabelWidth
+                            text: String(option.modelData.label || "")
+                            font: Kirigami.Theme.smallFont
+                            elide: Text.ElideRight
+                        }
+                        QQC2.ComboBox {
+                            Layout.preferredWidth: page.optionBoxWidth
+                            enabled: page.choiceJob === null
+                            model: option.modelData.values.map(v => String(v.label || v.id))
+                            // the saved value until the new variant is in place
+                            currentIndex: option.chosen
+                            onActivated: i => {
+                                currentIndex = Qt.binding(() => option.chosen);
+                                const next = Store.withValue(option.key, option.index, option.modelData.values[i].id);
+                                if (next !== option.key)
+                                    page.setChoice(row.modelData.look, next);
+                            }
+                            QQC2.ToolTip.text: "Every profile of this look"
+                            QQC2.ToolTip.visible: hovered
+                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                        }
+                    }
                 }
-                QQC2.ToolTip.text: (levels ? String(levels.label || "Level") : "") + " (every profile of this look)"
-                QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
             }
 
             QQC2.ComboBox {

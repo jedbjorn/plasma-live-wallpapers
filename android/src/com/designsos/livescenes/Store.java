@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -40,7 +41,6 @@ final class Store {
     static final String TAG = LiveWallpaperService.TAG;
     static final String DEFAULT_ASSETS = "default";   // the bundled look, never copied to storage
     static final float[] SPEEDS = {0.5f, 1f, 2f};
-    static final String[] LEVELS = {"weak", "medium", "strong"};
 
     static final class Profile {
         String id, name, look;
@@ -51,6 +51,7 @@ final class Store {
     static final class Video {
         String look, title, orientation;
         File file;             // a saved look
+        String stamp;          // its size and time when read: an update in place (same name) is another file
         String asset;          // or the bundled one
         int width, height;
         float focusX = 0.5f, focusY = 0.5f;
@@ -61,7 +62,7 @@ final class Store {
 
         /** Changes when a different file should play (a speed change alone doesn't restart playback). */
         String key() {
-            return file != null ? file.getPath() + ":" + file.length() + ":" + file.lastModified() : "asset:" + asset;
+            return file != null ? file.getPath() + ":" + stamp : "asset:" + asset;
         }
 
         AssetFileDescriptor openAsset(Context c) throws IOException { return c.getAssets().openFd(asset); }
@@ -259,21 +260,132 @@ final class Store {
         return e != null ? e.optString("sha256", "") : "";
     }
 
-    /** The level a scene's videos are (its "level", else its default), or null for a look without levels. */
-    static String level(JSONObject scene) {
-        JSONObject l = scene != null ? scene.optJSONObject("levels") : null;
-        return l == null ? null : scene.optString("level", l.optString("default", "strong"));
+    /** A look's options (FORMAT.md "Options"): one row each, with values to pick from; null if it has none. */
+    static JSONArray options(JSONObject scene) {
+        JSONArray o = scene != null ? scene.optJSONArray("options") : null;
+        if (o == null || o.length() == 0) return null;
+        for (int i = 0; i < o.length(); i++) {
+            JSONObject opt = o.optJSONObject(i);
+            JSONArray vs = opt != null ? opt.optJSONArray("values") : null;
+            if (vs == null || vs.length() == 0) return null;
+            for (int j = 0; j < vs.length(); j++) {
+                JSONObject v = vs.optJSONObject(j);
+                if (v == null || !v.optString("id").matches("[a-z0-9]+")) return null;
+            }
+        }
+        return o;
     }
 
-    /** A copy of the scene whose videos are a level's, with "level" set (FORMAT.md "Levels"); without levels, the scene. */
-    static JSONObject atLevel(JSONObject scene, String level) {
-        JSONObject l = scene.optJSONObject("levels");
-        JSONObject vs = l != null && l.optJSONObject("videos") != null ? l.optJSONObject("videos").optJSONObject(level) : null;
+    /** A theme option (FORMAT.md "Theme options"): every value carries a theme; it takes no part in variant keys. */
+    static boolean isTheme(JSONObject opt) {
+        JSONArray vs = opt.optJSONArray("values");
+        for (int j = 0; j < vs.length(); j++) if (vs.optJSONObject(j).optJSONObject("theme") == null) return false;
+        return true;
+    }
+
+    /** An option's default value id (its "default" if it is one of its values, else the first). */
+    static String defaultValue(JSONObject opt) {
+        JSONArray vs = opt.optJSONArray("values");
+        String d = opt.optString("default"), id = vs.optJSONObject(0).optString("id");
+        for (int j = 0; j < vs.length(); j++) if (vs.optJSONObject(j).optString("id").equals(d)) id = d;
+        return id;
+    }
+
+    /**
+     * The variant a scene's videos are (its "choice", else the video options' defaults), or null without video
+     * options (theme options aren't in the key).
+     */
+    static String choice(JSONObject scene) {
+        JSONArray o = options(scene);
+        if (o == null) return null;
+        StringBuilder key = new StringBuilder();
+        int n = 0;
+        for (int i = 0; i < o.length(); i++) {
+            JSONObject opt = o.optJSONObject(i);
+            if (isTheme(opt)) continue;
+            key.append(n++ > 0 ? "-" : "").append(defaultValue(opt));
+        }
+        if (n == 0) return null;
+        String c = scene.optString("choice", "");
+        return !c.isEmpty() && c.split("-").length == n ? c : key.toString();
+    }
+
+    /** The value of a theme option that the saved theme is (JSON-equal), else its default. */
+    static String themeValue(JSONObject opt, JSONObject theme) {
+        JSONArray vs = opt.optJSONArray("values");
+        for (int j = 0; j < vs.length(); j++)
+            if (sameJson(vs.optJSONObject(j).optJSONObject("theme"), theme)) return vs.optJSONObject(j).optString("id");
+        return defaultValue(opt);
+    }
+
+    /** The theme is one of the scene's theme options' values. */
+    static boolean isThemeValue(JSONObject scene, JSONObject theme) {
+        JSONArray o = options(scene);
+        if (o == null || theme == null) return false;
+        for (int i = 0; i < o.length(); i++) {
+            JSONObject opt = o.optJSONObject(i);
+            if (!isTheme(opt)) continue;
+            JSONArray vs = opt.optJSONArray("values");
+            for (int j = 0; j < vs.length(); j++) if (sameJson(vs.optJSONObject(j).optJSONObject("theme"), theme)) return true;
+        }
+        return false;
+    }
+
+    /** JSON values equal regardless of key order (numbers and strings compared as text). */
+    static boolean sameJson(Object a, Object b) {
+        if (a instanceof JSONObject && b instanceof JSONObject) {
+            JSONObject x = (JSONObject) a, y = (JSONObject) b;
+            if (x.length() != y.length()) return false;
+            for (Iterator<String> it = x.keys(); it.hasNext(); ) {
+                String k = it.next();
+                if (!y.has(k) || !sameJson(x.opt(k), y.opt(k))) return false;
+            }
+            return true;
+        }
+        if (a instanceof JSONArray && b instanceof JSONArray) {
+            JSONArray x = (JSONArray) a, y = (JSONArray) b;
+            if (x.length() != y.length()) return false;
+            for (int i = 0; i < x.length(); i++) if (!sameJson(x.opt(i), y.opt(i))) return false;
+            return true;
+        }
+        return a != null && b != null && String.valueOf(a).equals(String.valueOf(b));
+    }
+
+    /** A variant key with video option i (counting video options only) set to a value id. */
+    static String withValue(String key, int i, String id) {
+        String[] parts = key.split("-");
+        parts[i] = id;
+        return String.join("-", parts);
+    }
+
+    /** A variant key in words: the labels of its values ("Strong", "Strong, Heavy rain"). */
+    static String choiceLabel(JSONObject scene, String key) {
+        JSONArray o = options(scene);
+        String[] ids = key.split("-");
+        if (o == null) return key;
+        StringBuilder s = new StringBuilder();
+        int n = 0;
+        for (int i = 0; i < o.length(); i++) {
+            if (isTheme(o.optJSONObject(i))) continue;
+            if (n >= ids.length) return key;
+            JSONArray vs = o.optJSONObject(i).optJSONArray("values");
+            String label = ids[n];
+            for (int j = 0; j < vs.length(); j++)
+                if (vs.optJSONObject(j).optString("id").equals(ids[n])) label = vs.optJSONObject(j).optString("label", ids[n]);
+            s.append(n++ > 0 ? ", " : "").append(label);
+        }
+        return n == ids.length ? s.toString() : key;
+    }
+
+    /** A copy of the scene whose videos are a variant's, with "choice" set (FORMAT.md "Options"); else the scene. */
+    static JSONObject atChoice(JSONObject scene, String key) {
+        JSONObject vars = scene.optJSONObject("variants");
+        JSONObject vs = vars != null ? vars.optJSONObject(key) : null;
         if (vs == null) return scene;
         try {
             JSONObject s = new JSONObject(scene.toString());
             s.put("videos", new JSONObject(vs.toString()));
-            s.put("level", level);
+            s.put("choice", key);
             return s;
         } catch (JSONException e) {
             return scene;
@@ -288,25 +400,47 @@ final class Store {
 
     /**
      * Gives saved looks the theme of their catalog entry (looks saved before themes existed, or whose theme changed
-     * since), and its levels if the saved video is the catalog's default level (a look that got levels since), in
-     * their scene.json; the video stays. The playing wallpaper picks it up. Returns the looks updated.
+     * since; one chosen from a theme option stays), and its options if the saved video's file is one of the entry's variants (&lt;orientation&gt;-&lt;key&gt;.mp4,
+     * or a plain file with a variant's sha256: a look that got options, or other options, since), in their scene.json;
+     * the video stays. The playing wallpaper picks it up. Returns the looks updated.
      */
     List<String> syncThemes(List<Catalog.Entry> catalog) {
         List<String> done = new ArrayList<>();
         for (Catalog.Entry e : catalog) {
             JSONObject t = Theme.of(e.json) != null ? e.json.optJSONObject("theme") : null;
-            JSONObject lv = e.json.optJSONObject("levels");
+            JSONArray opts = options(e.json);
+            JSONObject vars = e.json.optJSONObject("variants");
             synchronized (this) {
                 JSONObject s = scene(e.id);
                 if (s == null) continue;
                 JSONObject old = s.optJSONObject("theme");
-                boolean theme = t != null && (old == null || !old.toString().equals(t.toString()));
-                boolean levels = lv != null && !s.has("levels") && !e.sha256.isEmpty()
-                        && e.sha256.equalsIgnoreCase(videoSha(s, e.orientation));
-                if (!theme && !levels) continue;
+                // a theme the user chose from a theme option stays
+                boolean theme = t != null && (old == null || !sameJson(old, t) && !isThemeValue(e.json, old));
+                String key = null;   // the variant the saved file is, if the options are new to the saved look
+                JSONObject sv = s.optJSONObject("videos") != null ? s.optJSONObject("videos").optJSONObject(e.orientation) : null;
+                String file = sv != null ? sv.optString("file") : "";
+                if (opts != null && vars != null) {
+                    String k = file.startsWith(e.orientation + "-") && file.endsWith(".mp4")
+                            ? file.substring(e.orientation.length() + 1, file.length() - 4) : null;
+                    String sha = videoSha(s, e.orientation);   // a plain file saved before the look had options
+                    if (k == null && !sha.isEmpty())
+                        for (Iterator<String> it = vars.keys(); it.hasNext(); ) {
+                            String v = it.next();
+                            JSONObject ve = vars.optJSONObject(v) != null ? vars.optJSONObject(v).optJSONObject(e.orientation) : null;
+                            if (ve != null && sha.equalsIgnoreCase(ve.optString("sha256"))) k = v;
+                        }
+                    JSONArray old2 = s.optJSONArray("options");
+                    if (k != null && vars.has(k) && (old2 == null || !old2.toString().equals(opts.toString()) || !k.equals(s.optString("choice"))))
+                        key = k;
+                }
+                if (!theme && key == null) continue;
                 try {
                     if (theme) s.put("theme", t);
-                    if (levels) s.put("levels", lv).put("level", level(e.json));
+                    if (key != null) {
+                        s.put("options", opts).put("choice", key);
+                        s.remove("levels");
+                        s.remove("level");
+                    }
                     writeText(new File(lookDir(e.id), "scene.json"), s.toString(2));
                     done.add(e.id);
                 } catch (IOException | JSONException x) {
@@ -315,7 +449,7 @@ final class Store {
             }
         }
         if (!done.isEmpty()) {
-            Log.i(TAG, "themes or levels from the catalog for " + done);
+            Log.i(TAG, "themes or options from the catalog for " + done);
             changed();
         }
         return done;
@@ -348,6 +482,7 @@ final class Store {
             if (e == null || !f.isFile()) continue;
             Video v = video(s, o, e);
             v.file = f;
+            v.stamp = f.length() + ":" + f.lastModified();
             v.poster = poster(look);
             return v;
         }
@@ -446,17 +581,17 @@ final class Store {
 
     /**
      * Installs a look: scene.json, the one video file (moved), the poster (moved, if any; else the saved one stays),
-     * replacing an older copy (for every profile that plays it). The scene's videos are those of its "level" if it
-     * has levels (the default level if it names none). If a profile already plays the look, that one is returned,
+     * replacing an older copy (for every profile that plays it). The scene's videos are those of its "choice" if it
+     * has options (the default variant if it names none). If a profile already plays the look, that one is returned,
      * never a second one: with {@code activate} it becomes the active one, unless the active profile already plays
      * this look. Otherwise a profile is made for it, and it becomes the active one.
      */
     Profile install(JSONObject scene, String orientation, File video, File poster, boolean activate) throws IOException {
         String id = scene.optString("id");
         if (!id.matches("[a-z0-9-]+")) throw new IOException("bad look id: " + id);
-        String level = level(scene);
-        // a level has its own file name, so a level change is a new file to the players
-        String name = orientation + (level != null ? "-" + level : "") + ".mp4";
+        String key = choice(scene);
+        // a variant has its own file name, so an option change is a new file to the players
+        String name = orientation + (key != null ? "-" + key : "") + ".mp4";
         File tmp = new File(looksDir, "." + id + ".new");
         deleteTree(tmp);
         if (!tmp.mkdirs()) throw new IOException("can't create " + tmp);
@@ -468,7 +603,10 @@ final class Store {
             entry.remove("url");
             entry.put("file", name);
             s.put("videos", new JSONObject().put(orientation, entry));
-            if (level != null) s.put("level", level);
+            if (key != null) s.put("choice", key);
+            JSONObject was = scene(id), chosen = was != null ? was.optJSONObject("theme") : null;
+            if (isThemeValue(s, chosen)) s.put("theme", chosen);   // the theme option's value stays (an update, a video option)
+            s.remove("variants");   // only the chosen variant is on the phone; the others come from the catalog
             s.remove("poster");
             if (!s.has("format")) s.put("format", 1);
             writeText(new File(tmp, "scene.json"), s.toString(2));
@@ -501,8 +639,23 @@ final class Store {
         return result;
     }
 
-    /** Installs a level's video for a saved look; false, and nothing changes, if no profile uses the look any more. */
-    synchronized boolean installLevel(JSONObject scene, String orientation, File video) throws IOException {
+    /** Sets a saved look's theme to a theme option's value (FORMAT.md "Theme options"): scene.json only, no download. */
+    synchronized void setTheme(String look, JSONObject theme) {
+        JSONObject s = scene(look);
+        if (s == null) return;
+        try {
+            s.put("theme", theme);
+            writeText(new File(lookDir(look), "scene.json"), s.toString(2));
+        } catch (IOException | JSONException x) {
+            Log.w(TAG, "can't set the theme of " + look + ": " + x.getMessage());
+            return;
+        }
+        Log.i(TAG, "theme of " + look + ": " + theme);
+        changed();
+    }
+
+    /** Installs a variant's video for a saved look; false, and nothing changes, if no profile uses the look any more. */
+    synchronized boolean installChoice(JSONObject scene, String orientation, File video) throws IOException {
         if (profilesFor(scene.optString("id")).isEmpty()) return false;   // deleted while it downloaded
         install(scene, orientation, video, null, false);
         return true;

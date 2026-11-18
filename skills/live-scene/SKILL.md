@@ -68,24 +68,30 @@ livescenes check packs/<id>
 - Sizes: aim for ≤ 30 MB landscape and ≤ 15 MB portrait. Lower quality with a higher `--crf` (default 24;
   +2 ≈ 30 % smaller); grain and noise cost the most.
 
-### A level setting (optional)
+### Options (optional)
 
-A look may offer **one** setting at three levels, weak / medium / strong (for example how strongly lights
-twinkle), when the user wants that choice. There is no live blending: each level is its own render of the
-same loop (same length, framing and timing), and the apps download only the level the user picks. Only
-offer it when the source can be rendered three times (a scene page with a strength parameter, a Blender
-value); never fake a level by filtering one video.
+A look may offer **options**, choices the user makes in the apps (for example how strongly lights twinkle, or
+rain on or off), when the user wants them. Each option is one row in the apps, with its values to pick from;
+the apps draw the rows from the pack, so any label and any values work without changing the apps. There is no
+live blending: every combination of values is its own render of the same loop (same length, framing and
+timing), a **variant**, and the apps download only the variant the user picks. Only offer options when the
+source can be rendered that many times (a scene page with a parameter, a Blender value); never fake one by
+filtering a single video. Two options of three values are nine renders: keep it small.
 
 ```
 livescenes pack strong.mkv --portrait strong-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" \
-  --level strong --level-label Twinkle --level-default strong
-livescenes pack medium.mkv --portrait medium-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" --level medium
-livescenes pack weak.mkv --portrait weak-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" --level weak
+  --option 'Twinkle: weak, medium, strong*' --variant strong
+livescenes pack medium.mkv --portrait medium-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" --variant medium
+livescenes pack weak.mkv --portrait weak-p.mkv --fade 0 -o packs/<id> --id <id> --title "…" --variant weak
 ```
 
-Use the same pack options (focus, crf, …) for every level. `--level-default` is what the apps save first
-and what the poster shows. `check` fails until all three levels are packed. Look at a frame of each level:
-they must be clearly different from one another, with medium halfway in feel.
+- `--option 'Label: v1, v2*, …'` once (repeat it for more rows, in order). Value ids are `[a-z0-9]+`, shown
+  capitalized; write `id=Label` for another label (`'Rain: none=No rain, heavy*'`). `*` marks the default:
+  what the apps save first and what the poster shows.
+- `--variant KEY` says which combination SRC is: the value ids in option order joined with `-` (`strong`,
+  or `strong-heavy` with a second option).
+- Use the same pack options (focus, crf, …) for every variant. `check` fails until every combination is
+  packed. Look at a frame of each: the values must be clearly different from one another.
 
 ## 5. Design its Android theme (every look ships one)
 
@@ -107,6 +113,12 @@ eye; it is part of the look, not an afterthought.
 livescenes theme packs/<id>                                        # a suggestion from the poster
 livescenes theme packs/<id> --set '#e2441f,#a3283a,#8c7b72' --style VIBRANT
 ```
+
+A look may also let the user pick its colors: a **theme option** (FORMAT.md "Theme options") is a row in the
+Android app whose values are themes, not videos (no render, no download). Add each value with
+`livescenes theme packs/<id> --option Color --value indigo --set '#3f63c8,#8ebdb6'` (the first value is the
+default, or pass `--default`); every value is designed by hand like a single theme. Only offer one when the
+user asks for it.
 
 If the look's source lives in a repository (like `scenes-src/<id>/` in plasma-live-wallpapers), keep the
 theme next to it as `theme.json` and set it with `--set scenes-src/<id>/theme.json`. Re-packing keeps the

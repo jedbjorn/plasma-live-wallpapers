@@ -109,7 +109,7 @@ last_line() {
     printf '%s' "$1" | tail -n 1 | tr -d '"\\' | cut -c1-200
 }
 
-# the video files present in a look folder: "landscape.mp4,portrait.mp4" (or landscape-<level>.mp4, ...), or "-"
+# the video files present in a look folder: "landscape.mp4,portrait.mp4" (or landscape-<variant>.mp4, ...), or "-"
 videos() {
     list=""
     for f in "$1"/landscape*.mp4 "$1"/portrait*.mp4; do
@@ -304,7 +304,7 @@ save)
     id=$1; scene=$2; name="${3:-}"
     valid_id "$id" || die "invalid id"
     case "$scene" in "{"*"}") ;; *) die "invalid scene.json" ;; esac
-    case "$name" in ""|landscape.mp4|portrait.mp4|landscape-[a-z]*.mp4|portrait-[a-z]*.mp4) ;; *) die "invalid file name" ;; esac
+    case "$name" in ""|landscape.mp4|portrait.mp4|landscape-[a-z0-9]*.mp4|portrait-[a-z0-9]*.mp4) ;; *) die "invalid file name" ;; esac
     src="$PREVIEW/$id"
     [ "$(head -n 1 "$src/status" 2>/dev/null)" = "done" ] || die "the preview is not ready"
     mkdir -p "$DATA/looks" || die "cannot create $DATA/looks"
@@ -318,7 +318,7 @@ save)
         moved=1
     done
     [ "$moved" -eq 1 ] || { rm -rf "$tmp"; die "the preview has no video"; }
-    # the preview's poster, else the saved one (a level change downloads only the video)
+    # the preview's poster, else the saved one (an option change downloads only the video)
     if [ -f "$src/poster.jpg" ]; then mv "$src/poster.jpg" "$tmp/poster.jpg"
     elif [ -f "$DATA/looks/$id/poster.jpg" ]; then mv "$DATA/looks/$id/poster.jpg" "$tmp/poster.jpg"
     fi

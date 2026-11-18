@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#223">
+<canvas id="c"></canvas>
+<script src="../rig.js"></script><script src="../timeline.js"></script>
+<script>
+// contact sheet of the cat: ?from=S&to=S&n=N&cols=C&z=ZOOM&p=1 (p: the portrait layout)
+const q = new URLSearchParams(location.search);
+const CATL = CAT.L; CAT = q.get('p') ? CAT.portrait : CAT.landscape;
+const from = +(q.get('from') || 0), to = +(q.get('to') || CATL), n = +(q.get('n') || 24), cols = +(q.get('cols') || 6), z = +(q.get('z') || 3);
+const CW = 150, CH = 96, W = 405, H = 260;
+const bg = new Image();
+bg.onload = go; bg.src = '../bg.png';
+function go() {
+  const c = document.getElementById('c'), rows = Math.ceil(n / cols);
+  c.width = cols * CW * z; c.height = rows * CH * z;
+  const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+  const nat = document.createElement('canvas'); nat.width = W; nat.height = H + 60;
+  const ng = nat.getContext('2d');
+  for (let i = 0; i < n; i++) {
+    const t = from + (to - from) * i / Math.max(1, n - 1);
+    const p = CAT.at(t);
+    ng.fillStyle = '#334'; ng.fillRect(0, 0, W, H + 60); ng.drawImage(bg, 0, 0);
+    let cx = 200, cy = 180;
+    if (p) {
+      const buf = new Uint8Array(W * (H + 60));
+      Rig.draw(p, buf, W, H + 60, k => CAT.at(t - 0.03 * k), t);
+      const id = ng.getImageData(0, 0, W, H + 60), d = id.data;
+      for (let j = 0; j < buf.length; j++) if (buf[j]) {
+        const col = buf[j] === 1 ? [6, 9, 28] : buf[j] === 2 ? [15, 20, 47] : [9, 12, 34];
+        d[4*j] = col[0]; d[4*j+1] = col[1]; d[4*j+2] = col[2];
+      }
+      ng.putImageData(id, 0, 0);
+      cx = q.get('cx') ? +q.get('cx') : p.x; cy = Math.min(p.y, 230);
+    }
+    const sx = Math.round(Math.min(Math.max(cx - CW / 2, 0), W - CW)), sy = Math.round(Math.min(cy - 66, H + 60 - CH));
+    const dx = (i % cols) * CW * z, dy = Math.floor(i / cols) * CH * z;
+    g.drawImage(nat, sx, sy, CW, CH, dx, dy, CW * z, CH * z);
+    g.fillStyle = '#fff'; g.font = '14px monospace'; g.fillText(t.toFixed(2), dx + 4, dy + 14);
+    g.strokeStyle = '#556'; g.strokeRect(dx + 0.5, dy + 0.5, CW * z, CH * z);
+  }
+  window.__done = true;
+}
+</script>

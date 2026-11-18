@@ -47,41 +47,73 @@ For distribution it is zipped as `<id>.zip` with the folder at the zip root.
   sideways). Players ignore it and play the video as it is. Copied into the catalog entry too.
 - `theme` (optional for readers; the SDK requires it for new looks): the look's Android theme, colors chosen
   by hand so the phone's Material You theme matches the look. See [Themes](#themes). Copied into the catalog entry.
-- `levels` (optional): the look's one level knob, three renders of it to choose from. See [Levels](#levels).
+- `options` and `variants` (optional): choices the user makes for the look, each combination its own render.
+  See [Options](#options).
 - Unknown keys must be ignored by readers. `format` changes only for incompatible changes.
 
-### Levels
+### Options
 
-A look may have **one** knob with exactly three levels, `weak`, `medium` and `strong` (for example how strongly
-the city lights of Avenue Flow twinkle). Each level is a separate render of the same loop, with its own
-landscape and portrait videos; the poster is shared (it shows the default level). Nothing is blended at play
-time: a level is just another video.
+A look may offer **options**: choices the user makes for it, such as how strongly the city lights of Avenue
+Flow twinkle. Each option is a row in the apps (its label, then its values to pick from). Every combination
+of values is its own render of the same loop, a **variant**, with its own landscape and portrait videos;
+the poster is shared (it shows the default variant). Nothing is blended at play time: a variant is just
+another video. The apps draw the rows from this data, so a new option or value needs no app change.
 
 ```json
 "videos": { "landscape": { "file": "landscape-strong.mp4", … }, "portrait": { "file": "portrait-strong.mp4", … } },
-"levels": {
-  "label": "Twinkle",
-  "default": "strong",
-  "videos": {
-    "weak":   { "landscape": { "file": "landscape-weak.mp4", … },   "portrait": { "file": "portrait-weak.mp4", … } },
-    "medium": { "landscape": { "file": "landscape-medium.mp4", … }, "portrait": { "file": "portrait-medium.mp4", … } },
-    "strong": { "landscape": { "file": "landscape-strong.mp4", … }, "portrait": { "file": "portrait-strong.mp4", … } }
-  }
+"options": [
+  { "label": "Twinkle", "default": "strong",
+    "values": [ { "id": "weak", "label": "Weak" }, { "id": "medium", "label": "Medium" },
+                { "id": "strong", "label": "Strong" } ] }
+],
+"variants": {
+  "weak":   { "landscape": { "file": "landscape-weak.mp4", … },   "portrait": { "file": "portrait-weak.mp4", … } },
+  "medium": { "landscape": { "file": "landscape-medium.mp4", … }, "portrait": { "file": "portrait-medium.mp4", … } },
+  "strong": { "landscape": { "file": "landscape-strong.mp4", … }, "portrait": { "file": "portrait-strong.mp4", … } }
 }
 ```
 
-- `label`: the knob's name in the apps. `default`: the level downloaded first.
-- `videos.<level>`: a `videos` object as above (same orientations, sizes and `loop` for every level).
-- The plain `videos` are always the default level's (the same entries), so a reader that ignores `levels`
-  plays the default level.
-- Pack files: `<orientation>-<level>.mp4`. The catalog entry carries `levels` the same way, with `url`s
-  (`<id>-<orientation>-<level>.mp4`).
-- Apps (Android, Plasma, macOS) show a Weak / Medium / Strong picker with the label for saved looks that have
-  `levels`. A saved look keeps one level (see [On the device](#on-the-device-previews-and-profiles)); changing
-  it downloads that level's video from the catalog and deletes the old one. All profiles of the look play
-  the chosen level.
-- When the catalog loads, Android and macOS give a saved look without `levels` the catalog entry's `levels` if its
-  video is the catalog's default level (a look that got levels later); no download.
+- `options`: a list, one entry per row, in the order shown. `label`: the row's name. `values`: two or more,
+  in the order shown; `id` is `[a-z0-9]+` (unique within the option), `label` is what the apps show.
+  `default`: the value id saved first.
+- A **variant key** is the chosen value ids of the video options (all options but
+  [theme options](#theme-options)) in option order, joined with `-`: `strong` for one option, `strong-heavy`
+  for Twinkle = strong and a second option Rain = heavy. The default variant's key is those options'
+  defaults joined the same way.
+- `variants`: one entry per combination (all of them), each a `videos` object as above (same orientations,
+  sizes and `loop` for every variant).
+- The plain `videos` are always the default variant's (the same entries), so a reader that ignores `options`
+  plays the default.
+- Pack files: `<orientation>-<key>.mp4`. The catalog entry carries `options` and `variants` the same way,
+  with `url`s (`<id>-<orientation>-<key>.mp4`).
+- Apps (Android, Plasma) show one row per option for saved looks that have `options`. A saved look keeps one
+  variant (see [On the device](#on-the-device-previews-and-profiles)); changing a value downloads that
+  variant's video from the catalog and deletes the old one. All profiles of the look play the chosen
+  variant. macOS doesn't read `options` yet (it still reads the older `levels`, which catalogs no longer
+  have) and plays the default variant.
+- Android: when the catalog loads, a saved look takes the catalog entry's `options` if its video's file name is one
+  of the entry's variant files (`<orientation>-<key>.mp4`), or its plain video has a variant's sha256 (a look saved
+  before it had options): it becomes that variant; no download.
+
+#### Theme options
+
+An option whose values each carry a `theme` (see [Themes](#themes)) chooses the look's Android theme instead of
+a video: no render and no download per value.
+
+```json
+{ "label": "Color", "default": "indigo",
+  "values": [ { "id": "indigo",  "label": "Indigo",  "theme": { "primary": "#3f63c8", … } },
+              { "id": "seafoam", "label": "Seafoam", "theme": { "primary": "#6fbfa8", … } } ] }
+```
+
+- It takes no part in variant keys. The look's plain `theme` is its default value's theme, so a reader that
+  ignores options uses the default colors.
+- Android shows its row like any other; choosing a value writes that value's theme as the saved look's
+  `theme` (nothing else changes). The value shown as chosen is the one whose theme equals the saved `theme`,
+  else the default. When the catalog loads, and when a video option changes or the look is updated or
+  imported again, Android keeps a saved theme that is one of these values' themes.
+- Plasma and macOS don't use themes, so they don't show theme options.
+- The SDK adds them with `livescenes theme <pack> --option <label> --value <id>[=<label>] --set <colors>`.
 
 ### Themes
 
@@ -120,7 +152,7 @@ time: a level is just another video.
 - Scale to **fill** the screen (aspect fill), then shift the crop so the focus point is as close to the
   screen centre as the video's edges allow.
 - Pick the video whose orientation matches the screen; if missing, crop the other one.
-- Speed presets: **0.5×, 1×, 2×** (playback rate). Besides, a look with `levels` plays the chosen level's
+- Speed presets: **0.5×, 1×, 2×** (playback rate). Besides, a look with `options` plays the chosen variant's
   video. Nothing else is configurable per look.
 - Pause whenever the wallpaper is hidden (apps over it, screen off, locked without it showing).
 
@@ -152,8 +184,8 @@ Every app must let the catalog URL be overridden (for testing and for third-part
 
 URLs may be relative; they resolve against the catalog's own URL. Release assets are flat:
 `<id>-landscape.mp4`, `<id>-portrait.mp4`, `<id>-poster.jpg`, plus `catalog.json`. A look with
-[levels](#levels) has `<id>-<orientation>-<level>.mp4` for all three levels instead, listed under its entry's
-`levels.videos` (the plain `videos` repeat the default level's).
+[options](#options) has `<id>-<orientation>-<key>.mp4` for every variant instead, listed under its entry's
+`variants` (the plain `videos` repeat the default variant's).
 
 ## App updates
 
@@ -194,11 +226,11 @@ Apps keep storage clean: only looks the user saves stay on disk.
 - **Browse**: the catalog and posters only (posters may be cached in the cache folder).
 - **Preview**: download only the one video this device needs (portrait on phones, landscape on desktops)
   into the **cache** folder, verify its sha256, play it. Leaving the preview without saving deletes it;
-  leftovers in the preview cache are deleted at every launch. A look with levels is previewed and saved at
-  its default level.
-- **Level** (looks with `levels`): the saved look's level is changed in its profile's settings: the app
-  downloads that level's video for this device from the catalog (sha256 checked), puts it in place of the
-  old one and deletes the old one. Only the chosen level's video is ever on disk.
+  leftovers in the preview cache are deleted at every launch. A look with options is previewed and saved as
+  its default variant.
+- **Options** (looks with `options`): the saved look's values are changed in its profile's settings: the app
+  downloads that variant's video for this device from the catalog (sha256 checked), puts it in place of the
+  old one and deletes the old one. Only the chosen variant's video is ever on disk.
 - **Save as profile**: move the previewed video into permanent storage and create a profile.
   A profile is `{ "id", "name", "look", "speed" }`. Several profiles may share one look; the look's
   files are deleted when no profile uses it any more. The active profile cannot be deleted.
@@ -219,14 +251,14 @@ Inside the saved-data folder:
 ```
 looks/<id>/scene.json
 looks/<id>/landscape.mp4 or portrait.mp4   (only the orientation this device uses)
-looks/<id>/landscape-<level>.mp4 or portrait-<level>.mp4   (instead, for a look with levels)
+looks/<id>/landscape-<key>.mp4 or portrait-<key>.mp4   (instead, for a look with options)
 looks/<id>/poster.jpg
 profiles.json   { "format": 1, "active": "<profile id>", "profiles": [ { "id": "…", "name": "Hall", "look": "hall", "speed": 1.0 } ] }
 ```
 
-A saved look's `scene.json` lists only the video on disk under `videos`. A look with levels keeps its
-`levels` (to show the picker) and adds `"level": "<level>"`, the level that file is; its file is named
-`<orientation>-<level>.mp4`, so a level change is a new file to the players.
+A saved look's `scene.json` lists only the video on disk under `videos`. A look with options keeps its
+`options` (to show the rows), drops `variants`, and adds `"choice": "<key>"`, the variant that file is; its
+file is named `<orientation>-<key>.mp4`, so a change is a new file to the players.
 
 Android imports: packs pushed to the app's external files dir `import/<id>/` (reachable with
 `adb push` without root) are imported on the next launch, then removed from `import/`. Files pushed by
