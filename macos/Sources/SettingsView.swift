@@ -107,11 +107,11 @@ struct ProfileRow: View {
                     .textFieldStyle(.plain)
                     .font(.headline)
                     .onSubmit { store.rename(profile.id, name) }
-                if let j = model.levelJob, j.look == profile.look {
+                if let j = model.choiceJob, j.look == profile.look {
                     HStack(spacing: 6) {
-                        ProgressView(value: model.levelProgress).frame(width: 80).controlSize(.small)
-                        Text("Downloading \(levelLabel(j.level))… \(Int(model.levelProgress * 100))%")
-                        Button("Cancel") { model.cancelLevel() }.buttonStyle(.link)
+                        ProgressView(value: model.choiceProgress).frame(width: 80).controlSize(.small)
+                        Text("Downloading \(j.label)… \(Int(model.choiceProgress * 100))%")
+                        Button("Cancel") { model.cancelChoice() }.buttonStyle(.link)
                     }
                     .font(.caption).foregroundStyle(.secondary)
                 } else {
@@ -120,14 +120,22 @@ struct ProfileRow: View {
                 }
             }
             Spacer()
-            if let lv = store.level(profile.look) {
-                Picker(lv.label, selection: Binding(get: { lv.level }, set: { model.setLevel(look: profile.look, $0) })) {
-                    ForEach(levelNames, id: \.self) { l in Text("\(lv.label): \(levelLabel(l))").tag(l) }
+            if let o = store.options(profile.look) {
+                // one row per option, from the look's data; the saved value shows until the new variant is in place
+                VStack(alignment: .trailing, spacing: 4) {
+                    ForEach(Array(o.list.enumerated()), id: \.offset) { i, opt in
+                        let ids = o.choice.components(separatedBy: "-")
+                        Picker(opt.label, selection: Binding(
+                            get: { i < ids.count ? ids[i] : opt.default },
+                            set: { model.setChoice(look: profile.look, withValue(o.choice, i, $0)) })) {
+                            ForEach(opt.values) { v in Text("\(opt.label): \(v.label)").tag(v.id) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .help("\(opt.label) (every profile of this look)")
+                    }
                 }
-                .labelsHidden()
-                .fixedSize()
-                .disabled(model.levelJob != nil)
-                .help("\(lv.label) (every profile of this look)")
+                .disabled(model.choiceJob != nil)
             }
             Picker("Speed", selection: Binding(get: { profile.speed }, set: { store.setSpeed(profile.id, $0) })) {
                 ForEach(speeds, id: \.self) { s in Text(speedLabel(s)).tag(s) }

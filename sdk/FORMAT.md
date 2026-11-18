@@ -86,14 +86,14 @@ another video. The apps draw the rows from this data, so a new option or value n
   plays the default.
 - Pack files: `<orientation>-<key>.mp4`. The catalog entry carries `options` and `variants` the same way,
   with `url`s (`<id>-<orientation>-<key>.mp4`).
-- Apps (Android, Plasma) show one row per option for saved looks that have `options`. A saved look keeps one
-  variant (see [On the device](#on-the-device-previews-and-profiles)); changing a value downloads that
-  variant's video from the catalog and deletes the old one. All profiles of the look play the chosen
-  variant. macOS doesn't read `options` yet (it still reads the older `levels`, which catalogs no longer
-  have) and plays the default variant.
-- Android: when the catalog loads, a saved look takes the catalog entry's `options` if its video's file name is one
+- Apps (Android, Plasma, macOS) show one row per option for saved looks that have `options`. A saved look
+  keeps one variant (see [On the device](#on-the-device-previews-and-profiles)); changing a value downloads
+  that variant's video from the catalog and deletes the old one. All profiles of the look play the chosen
+  variant.
+- Android and macOS: when the catalog loads, a saved look takes the catalog entry's `options` if its video's file name is one
   of the entry's variant files (`<orientation>-<key>.mp4`), or its plain video has a variant's sha256 (a look saved
-  before it had options): it becomes that variant; no download.
+  before it had options): it becomes that variant; no download. On macOS this also converts a look saved with the
+  older `levels` (its file is `<orientation>-<level>.mp4`): `levels` and `level` are dropped.
 
 #### Theme options
 

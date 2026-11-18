@@ -14,32 +14,86 @@ struct CatalogEntry: Identifiable {
     var video: URL
     var bytes: Int64
     var sha256: String
-    var levels: Levels?           // the look's level knob (sdk/FORMAT.md, Levels), for `orientation`
+    var options: CatalogOptions?  // the look's video options and variants (sdk/FORMAT.md, Options), for `orientation`
 }
 
-let levelNames = ["weak", "medium", "strong"]
-
-func levelLabel(_ l: String) -> String { l.prefix(1).uppercased() + l.dropFirst() }
-
-/// A catalog look's levels: one video per level, in the entry's orientation.
-struct Levels {
-    struct Video { var json: [String: Any]; var url: URL; var bytes: Int64; var sha256: String }
-    var json: [String: Any]       // the catalog's `levels`, as is (a saved scene.json keeps it)
+/// One row of a look's options (sdk/FORMAT.md, Options): its label and the values to pick from.
+struct LookOption {
+    struct Value: Identifiable { var id: String; var label: String }
     var label: String
+    var values: [Value]
     var `default`: String
-    var videos: [String: Video]
+}
 
-    init?(_ j: Any?, orientation o: String, base: URL) {
-        guard let j = j as? [String: Any], let vs = j["videos"] as? [String: Any] else { return nil }
-        json = j
-        label = j["label"] as? String ?? "Level"
-        let d = j["default"] as? String ?? "strong"
-        `default` = levelNames.contains(d) ? d : "strong"
+/// A look's video options, in order, or nil if it has none. Theme options (every value carries a `theme`)
+/// only choose Android's colors and take no part in variant keys, so the desktop leaves them out.
+func videoOptions(_ j: Any?) -> [LookOption]? {
+    guard let list = j as? [Any], !list.isEmpty else { return nil }
+    var out: [LookOption] = []
+    for item in list {
+        guard let o = item as? [String: Any], let vs = o["values"] as? [Any], !vs.isEmpty else { return nil }
+        var values: [LookOption.Value] = [], themes = 0
+        for case let v as [String: Any] in vs {
+            guard let id = v["id"] as? String, id.range(of: "^[a-z0-9]+$", options: .regularExpression) != nil else { return nil }
+            values.append(.init(id: id, label: (v["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id))
+            if let t = v["theme"], !(t is NSNull) { themes += 1 }
+        }
+        guard values.count == vs.count else { return nil }
+        if themes == values.count { continue }
+        let d = o["default"] as? String ?? ""
+        out.append(LookOption(label: o["label"] as? String ?? "Option", values: values,
+                              default: values.contains { $0.id == d } ? d : values[0].id))
+    }
+    return out.isEmpty ? nil : out
+}
+
+/// The variant key of the options' defaults: their value ids joined with "-".
+func defaultKey(_ opts: [LookOption]) -> String { opts.map(\.default).joined(separator: "-") }
+
+/// A variant key with option i set to value id.
+func withValue(_ key: String, _ i: Int, _ id: String) -> String {
+    var parts = key.components(separatedBy: "-")
+    if i < parts.count { parts[i] = id }
+    return parts.joined(separator: "-")
+}
+
+/// A variant key in words: the labels of its values ("Strong", "Strong, Heavy rain").
+func choiceLabel(_ opts: [LookOption], _ key: String) -> String {
+    let ids = key.components(separatedBy: "-")
+    return opts.enumerated().map { i, o in
+        let id = i < ids.count ? ids[i] : ""
+        return o.values.first { $0.id == id }?.label ?? id
+    }.joined(separator: ", ")
+}
+
+/// The variant a saved scene's video is: its `choice` if that names a value of every video option, else
+/// the default.
+func sceneChoice(_ scene: [String: Any], _ opts: [LookOption]) -> String {
+    if let c = scene["choice"] as? String {
+        let ids = c.components(separatedBy: "-")
+        if ids.count == opts.count, zip(opts, ids).allSatisfy({ o, id in o.values.contains { $0.id == id } }) { return c }
+    }
+    return defaultKey(opts)
+}
+
+/// A catalog look's options: one video per variant, in the entry's orientation.
+struct CatalogOptions {
+    struct Video { var json: [String: Any]; var url: URL; var bytes: Int64; var sha256: String }
+    var json: Any                 // the catalog's `options`, as is (theme options too; a saved scene.json keeps it)
+    var list: [LookOption]        // the video options
+    var `default`: String         // the default variant's key
+    var videos: [String: Video]   // by variant key
+
+    init?(options: Any?, variants: Any?, orientation o: String, base: URL) {
+        guard let opts = options, let list = videoOptions(opts), let vs = variants as? [String: Any] else { return nil }
+        json = opts
+        self.list = list
+        `default` = defaultKey(list)
         videos = [:]
-        for l in levelNames {
-            guard let v = (vs[l] as? [String: Any])?[o] as? [String: Any], let u = v["url"] as? String,
+        for (k, x) in vs {
+            guard let v = (x as? [String: Any])?[o] as? [String: Any], let u = v["url"] as? String,
                   let url = URL(string: u, relativeTo: base)?.absoluteURL else { continue }
-            videos[l] = Video(json: v, url: url, bytes: (v["bytes"] as? NSNumber)?.int64Value ?? 0,
+            videos[k] = Video(json: v, url: url, bytes: (v["bytes"] as? NSNumber)?.int64Value ?? 0,
                               sha256: v["sha256"] as? String ?? "")
         }
         if videos.isEmpty { return nil }
@@ -72,7 +126,7 @@ enum Catalog {
                     orientation: o, video: url,
                     bytes: (v["bytes"] as? NSNumber)?.int64Value ?? 0,
                     sha256: v["sha256"] as? String ?? "",
-                    levels: Levels(l["levels"], orientation: o, base: base)))
+                    options: CatalogOptions(options: l["options"], variants: l["variants"], orientation: o, base: base)))
                 break
             }
         }
@@ -86,9 +140,9 @@ enum Catalog {
         try? fm.removeItem(at: dir)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        // a look with levels is saved at its default level, as <orientation>-<level>.mp4
-        let level = e.levels?.default
-        let file = level.map { "\(e.orientation)-\($0).mp4" } ?? "\(e.orientation).mp4"
+        // a look with options is saved as its default variant (the plain videos), as <orientation>-<key>.mp4
+        let key = e.options?.default
+        let file = key.map { "\(e.orientation)-\($0).mp4" } ?? "\(e.orientation).mp4"
         try await download(e.video, bytes: e.bytes, sha256: e.sha256, to: dir.appendingPathComponent(file),
                            progress: progress)
 
@@ -104,9 +158,9 @@ enum Catalog {
         v["url"] = nil
         v["file"] = file
         scene["videos"] = [e.orientation: v]
-        if let l = e.levels, let level {
-            scene["levels"] = l.json
-            scene["level"] = level
+        if let o = e.options, let key {
+            scene["options"] = o.json   // theme options too, as the catalog has them
+            scene["choice"] = key
         }
         let data = try JSONSerialization.data(withJSONObject: scene, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: dir.appendingPathComponent("scene.json"), options: .atomic)
@@ -123,18 +177,19 @@ enum Catalog {
         }
     }
 
-    /// Changes a saved look in `dir` to another level: downloads that level's video next to the old one,
-    /// points scene.json at it, then deletes the old video. Only the chosen level's video stays on disk.
-    static func changeLevel(_ e: CatalogEntry, to level: String, in dir: URL,
-                            progress: @escaping (Double) -> Void) async throws {
-        guard let v = e.levels?.videos[level] else {
-            throw StoreError.message("the catalog has no \(level) level of \(e.title)")
+    /// Changes a saved look in `dir` to another variant (an option changed): downloads that variant's video
+    /// next to the old one, points scene.json at it, then deletes the old video. Only the chosen variant's
+    /// video stays on disk.
+    static func changeChoice(_ e: CatalogEntry, to key: String, in dir: URL,
+                             progress: @escaping (Double) -> Void) async throws {
+        guard let o = e.options, let v = o.videos[key] else {
+            throw StoreError.message("the catalog has no \(e.options.map { choiceLabel($0.list, key) } ?? key) of \(e.title)")
         }
         let sceneFile = dir.appendingPathComponent("scene.json")
         guard var scene = (try? JSONSerialization.jsonObject(with: Data(contentsOf: sceneFile))) as? [String: Any] else {
             throw StoreError.message("\(e.title) has no readable scene.json")
         }
-        let file = "\(e.orientation)-\(level).mp4"
+        let file = "\(e.orientation)-\(key).mp4"
         let part = dir.appendingPathComponent(".\(file).part")
         do {
             try await download(v.url, bytes: v.bytes, sha256: v.sha256, to: part, progress: progress)
@@ -153,29 +208,48 @@ enum Catalog {
         nv["url"] = nil
         nv["file"] = file
         scene["videos"] = [e.orientation: nv]
-        scene["levels"] = e.levels!.json
-        scene["level"] = level
+        scene["options"] = o.json
+        scene["choice"] = key
+        scene["levels"] = nil   // the older level knob, which options replace
+        scene["level"] = nil
         let data = try JSONSerialization.data(withJSONObject: scene, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: sceneFile, options: .atomic)
         // a player still reading the old file keeps it until it closes it
         for f in old where f != file && !f.contains("/") { try? fm.removeItem(at: dir.appendingPathComponent(f)) }
     }
 
-    /// A saved look without levels whose video is the catalog's default level (saved before the look got
-    /// levels, or by an app that ignored them) gets the catalog's levels: no download. Returns true if the
-    /// scene.json changed.
-    static func adoptLevels(_ e: CatalogEntry, in dir: URL) -> Bool {
+    /// A saved look whose video is one of the catalog entry's variants gets the entry's options, as Android
+    /// does (sdk/FORMAT.md, Options): its file is named <orientation>-<key>.mp4 (a look saved with levels,
+    /// or whose options changed since), or it is a plain file with a variant's sha256 (saved before the look
+    /// had options, or by an app that ignored them). No download. Returns true if the scene.json changed.
+    static func adoptOptions(_ e: CatalogEntry, in dir: URL) -> Bool {
         let sceneFile = dir.appendingPathComponent("scene.json")
-        guard let l = e.levels, let d = l.videos[l.default], !d.sha256.isEmpty,
+        guard let o = e.options,
               var scene = (try? JSONSerialization.jsonObject(with: Data(contentsOf: sceneFile))) as? [String: Any],
-              scene["levels"] == nil,
-              let v = (scene["videos"] as? [String: Any])?[e.orientation] as? [String: Any],
-              (v["sha256"] as? String)?.caseInsensitiveCompare(d.sha256) == .orderedSame else { return false }
-        scene["levels"] = l.json
-        scene["level"] = l.default
+              let v = (scene["videos"] as? [String: Any])?[e.orientation] as? [String: Any] else { return false }
+        let file = v["file"] as? String ?? ""
+        var key: String?
+        let prefix = "\(e.orientation)-"
+        if file.hasPrefix(prefix), file.hasSuffix(".mp4") {
+            key = String(file.dropFirst(prefix.count).dropLast(4))
+        } else if let sha = v["sha256"] as? String, !sha.isEmpty {
+            key = o.videos.first { $0.value.sha256.caseInsensitiveCompare(sha) == .orderedSame }?.key
+        }
+        guard let key, o.videos[key] != nil else { return false }
+        if scene["choice"] as? String == key, let saved = scene["options"], sameJSON(saved, o.json) { return false }
+        scene["options"] = o.json
+        scene["choice"] = key
+        scene["levels"] = nil
+        scene["level"] = nil
         guard let data = try? JSONSerialization.data(withJSONObject: scene, options: [.prettyPrinted, .sortedKeys]),
               (try? data.write(to: sceneFile, options: .atomic)) != nil else { return false }
         return true
+    }
+
+    private static func sameJSON(_ a: Any, _ b: Any) -> Bool {
+        guard JSONSerialization.isValidJSONObject([a]), JSONSerialization.isValidJSONObject([b]) else { return false }
+        return (try? JSONSerialization.data(withJSONObject: [a], options: .sortedKeys))
+            == (try? JSONSerialization.data(withJSONObject: [b], options: .sortedKeys))
     }
 }
 
