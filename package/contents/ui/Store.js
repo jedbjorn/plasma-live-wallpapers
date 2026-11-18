@@ -4,7 +4,6 @@
 
 var DEFAULT_CATALOG = "https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest/download/catalog.json";
 var SPEEDS = [0.5, 1.0, 2.0];
-var LEVELS = ["weak", "medium", "strong"];      // a look's level knob (sdk/FORMAT.md, "Levels")
 // The version of this code. plasmashell keeps it loaded after an upgrade, so it can differ from the
 // installed metadata.json until the shell restarts. release.sh checks it against the VERSION file.
 var VERSION = "2.3.0";
@@ -236,13 +235,50 @@ function speedLabel(v) {
     return (v === 0.5 ? "0.5" : String(v)) + "×";
 }
 
-// the level a scene's videos are (its "level", else its default), or "" for a look without levels
-function level(scene) {
-    if (!scene || !scene.levels)
-        return "";
-    return LEVELS.indexOf(scene.level) >= 0 ? scene.level : (scene.levels["default"] || "strong");
+// a look's video options (sdk/FORMAT.md, "Options"): [{ label, default, values: [{ id, label }] }], or null.
+// Theme options (values with a "theme") only choose Android's colors: the desktop leaves them out.
+function options(list) {
+    if (!Array.isArray(list) || list.length === 0)
+        return null;
+    var ok = list.every(function (o) {
+        return o && Array.isArray(o.values) && o.values.length > 0 && o.values.every(function (v) {
+            return v && typeof v.id === "string" && /^[a-z0-9]+$/.test(v.id);
+        });
+    });
+    var video = ok ? list.filter(function (o) {
+        return !o.values.every(function (v) { return v.theme; });
+    }) : [];
+    return video.length > 0 ? video : null;
 }
 
-function levelLabel(l) {
-    return l.charAt(0).toUpperCase() + l.slice(1);
+// the variant key of the options' defaults: their value ids joined with "-"
+function defaultKey(opts) {
+    return opts.map(function (o) {
+        return o.values.some(function (v) { return v.id === o["default"]; }) ? o["default"] : o.values[0].id;
+    }).join("-");
+}
+
+// the variant a saved scene's video is (its "choice", else the default), or "" for a look without options
+function choice(scene) {
+    var opts = scene ? options(scene.options) : null;
+    if (!opts)
+        return "";
+    var ok = typeof scene.choice === "string" && scene.choice.split("-").length === opts.length;
+    return ok ? scene.choice : defaultKey(opts);
+}
+
+// a variant key with option i set to value id
+function withValue(key, i, id) {
+    var parts = key.split("-");
+    parts[i] = id;
+    return parts.join("-");
+}
+
+// a variant key in words: the labels of its values ("Strong", "Strong, Heavy rain")
+function choiceLabel(opts, key) {
+    var ids = key.split("-");
+    return opts.map(function (o, i) {
+        var v = o.values.filter(function (x) { return x.id === ids[i]; })[0];
+        return v ? String(v.label || v.id) : String(ids[i]);
+    }).join(", ");
 }
