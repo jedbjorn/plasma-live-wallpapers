@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Window Seat</title></head>
+<body>
+<script src="rig.js"></script>
+<script src="timeline.js"></script>
+<script src="scene.js"></script>
+<script>
+// The cat is posed twelve times a second, like hand-drawn sprite frames. The city's windows go dark and light up,
+// beacons blink, the lamps wobble on the water. The rain stays as painted.
+Scene.run({
+  L: CAT.L, cat: CAT, catFps: 12, worldFps: 6,
+  landscape: { top: 20 },
+  portrait: { left: 288 },                      // phones: the right pane, from its mullion to the wall, and the books
+});
+</script>
+</body></html>

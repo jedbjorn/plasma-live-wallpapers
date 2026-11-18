@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Under the Wave</title></head>
+<body>
+<script src="wave.js"></script>
+<script>
+// Under the Wave. The great wave builds, a schooner sails into the trough, the crest breaks on her
+// and she goes over; she bobs keel-up in the foam, rolls back up and sails away while the crest grows
+// back. One 28 s loop, the wave on the same clock in both variants of the look's "Frame" option:
+//   (default)        Inside: the circle is the stage. She comes out from behind the swell and leaves
+//                    past Fuji; nothing leaves the medallion.
+//   ?frame=breakout  Breaks out: the wave rears past the circle's edge, foam and spray fly out onto
+//                    the slate, and she sails in from the left of the screen and out the same way.
+// On phones the medallion is framed by its diameter, not cropped: 80% of the width (inside), or 72%
+// and off to the right so she has slate to cross (breakout).
+const breakout = new URLSearchParams(location.search).get('frame') === 'breakout';
+Wave.run({
+  L: 28,
+  breakout,
+  frame: portrait => !portrait ? { disc: 0.50, ax: 0.5, ay: 0.5 }
+    : breakout ? { disc: 0.72, ax: 0.56, ay: 0.46 } : { disc: 0.80, ax: 0.5, ay: 0.46 }
+});
+</script>
+</body></html>

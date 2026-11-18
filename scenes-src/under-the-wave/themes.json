@@ -1,0 +1,16 @@
+{
+  "indigo": {
+    "primary": "#3d5cc9",
+    "secondary": "#85a7bf",
+    "tertiary": "#2e3440",
+    "dark": true,
+    "style": "VIBRANT"
+  },
+  "seafoam": {
+    "primary": "#74c9a8",
+    "secondary": "#85a7bf",
+    "tertiary": "#2e3440",
+    "dark": true,
+    "style": "TONAL_SPOT"
+  }
+}
