@@ -76,11 +76,11 @@ time: a level is just another video.
   plays the default level.
 - Pack files: `<orientation>-<level>.mp4`. The catalog entry carries `levels` the same way, with `url`s
   (`<id>-<orientation>-<level>.mp4`).
-- Apps (Android, Plasma) show a Weak / Medium / Strong picker with the label for saved looks that have
+- Apps (Android, Plasma, macOS) show a Weak / Medium / Strong picker with the label for saved looks that have
   `levels`. A saved look keeps one level (see [On the device](#on-the-device-previews-and-profiles)); changing
   it downloads that level's video from the catalog and deletes the old one. All profiles of the look play
-  the chosen level. macOS ignores `levels` for now and plays the default level.
-- When the catalog loads, Android gives a saved look without `levels` the catalog entry's `levels` if its
+  the chosen level.
+- When the catalog loads, Android and macOS give a saved look without `levels` the catalog entry's `levels` if its
   video is the catalog's default level (a look that got levels later); no download.
 
 ### Themes
