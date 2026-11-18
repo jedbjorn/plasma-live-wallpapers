@@ -2,9 +2,10 @@
 // give off. WebGL2, no dependencies. Scene.run({ jaw, landscape, portrait })
 //   jaw               [from, to]: two points of her head (picture x, y, depth) between which the far cheek and jaw
 //                     run in a straight line while she is turned
-//   landscape, portrait   { left, route }: left = first picture column shown (the picture always stands on the
-//                     bottom edge and is scaled to fill the width from there); route = the butterfly's way
-//                     points (see fly.js)
+//   landscape, portrait   { left, route, lift, foot }: left = first picture column shown (the picture stands on
+//                     the bottom edge and is scaled to fill the width from there); lift = how far it is raised
+//                     off the bottom edge, as a share of the screen height; foot = picture pixels over which its
+//                     bottom edge sinks into the dark (0: none); route = the butterfly's way points (see fly.js)
 // ?t=<seconds> freezes time. Everything is periodic in Story.L.
 (function () {
   const SRC = [1920, 1080], HEAD = [1330, 44, 1790, 444], HAND = [1088, 416, 1288, 536];
@@ -134,10 +135,11 @@ precision highp float; uniform sampler2D uTex; in vec2 vUV; out vec4 o;
 void main(){ o = texture(uTex, vUV); }`;
   // the right edge of the picture, where she is cut off, sinks into the dark
   const FS_FADE = `#version 300 es
-precision highp float; uniform vec4 uInv; uniform float uRes; out vec4 o;
+precision highp float; uniform vec4 uInv; uniform float uRes, uFoot; out vec4 o;
 void main(){
   vec2 p = vec2(gl_FragCoord.x, uRes - gl_FragCoord.y)*uInv.xy + uInv.zw;
   float f = smoothstep(${SRC[0] + 5}.0, ${SRC[0] - 130}.0, p.x);
+  if (uFoot > 0.0) f *= smoothstep(${SRC[1]}.0, ${SRC[1]}.0 - uFoot, p.y);   // a raised picture's foot sinks into the dark
   o = vec4(vec3(f), 1.0);
 }`;
   const VS_SPR = `#version 300 es
@@ -257,7 +259,7 @@ void main(){
       canvas.width = w; canvas.height = h; canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
       lay = h > w ? cfg.portrait : cfg.landscape;
       const s = h > w ? w / (SRC[0] - lay.left) : Math.max(w / SRC[0], h / SRC[1]);
-      const ox = w - SRC[0] * s, oy = h - SRC[1] * s;                      // the picture stands in the bottom right corner
+      const ox = w - SRC[0] * s, oy = h - SRC[1] * s - (lay.lift || 0) * h;  // the picture stands in the bottom right corner
       view = { w, h, s, ox, oy, u: [2 * s / w, -2 * s / h, 2 * ox / w - 1, 1 - 2 * oy / h] };
       sizeTarget(tmp, w, h, 4); sizeTarget(acc, w, h, 5);
       fly = Fly.build(lay.route);
@@ -433,7 +435,7 @@ void main(){
       flushSprites();
 
       // into the dark at the right edge
-      gl.useProgram(P.fade.p); gl.uniform4f(P.fade.u.uInv, 1 / view.s, 1 / view.s, -view.ox / view.s, -view.oy / view.s); gl.uniform1f(P.fade.u.uRes, h);
+      gl.useProgram(P.fade.p); gl.uniform4f(P.fade.u.uInv, 1 / view.s, 1 / view.s, -view.ox / view.s, -view.oy / view.s); gl.uniform1f(P.fade.u.uRes, h); gl.uniform1f(P.fade.u.uFoot, lay.foot || 0);
       gl.enable(gl.BLEND); gl.blendFunc(gl.DST_COLOR, gl.ZERO); gl.bindVertexArray(tri.v); gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.disable(gl.BLEND);
     }

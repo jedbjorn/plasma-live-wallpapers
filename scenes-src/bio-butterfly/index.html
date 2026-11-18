@@ -9,8 +9,8 @@
 <script>
 // A blue butterfly comes out of the dark and settles on her finger. She watches it; then she turns her head and
 // looks straight at you. The butterfly leaves. She looks back at her empty hand.
-// Way points: [seconds, x, y, size] in picture pixels (1920x1080; the phone's view starts at x = 1012 and has
-// about 940 pixels of dark above the picture). The times come from story.js.
+// Way points: [seconds, x, y, size] in picture pixels (1920x1080; the phone's view starts at x = 1012, the picture is
+// raised a fifth of the screen and has about 530 pixels of dark above it). The times come from story.js.
 (function () {
   const T = Story.T, F = [1163, 407];
   Scene.run({
@@ -29,11 +29,13 @@
     },
     portrait: {
       left: 1012,
+      lift: 0.2,      // raised a fifth of the screen off the bottom; her dress sinks into the dark below
+      foot: 230,
       route: {
-        inbound: [[T.enter, 1450, -700, 0.16], [2.6, 1300, -560, 0.26], [3.9, 1500, -400, 0.38], [5.0, 1650, -230, 0.5], [6.1, 1480, -80, 0.62],
-          [7.1, 1260, 60, 0.75], [8.0, 1150, 180, 0.86], [8.8, 1095, 290, 0.94], [T.hover, 1140, 375, 1.0], [T.land, F[0], F[1], 1]],
-        outbound: [[T.off, F[0], F[1], 1], [T.off + 0.7, 1250, 330, 1.05], [T.off + 1.4, 1400, 250, 1.12], [T.off + 2.1, 1530, 90, 1.0],
-          [T.off + 2.9, 1500, -200, 0.7], [T.gone, 1380, -520, 0.34]],
+        inbound: [[T.enter, 1450, -369, 0.16], [2.6, 1300, -272, 0.26], [3.9, 1500, -162, 0.38], [5.0, 1650, -44, 0.5], [6.1, 1480, 60, 0.62],
+          [7.1, 1260, 157, 0.75], [8.0, 1150, 240, 0.86], [8.8, 1095, 316, 0.94], [T.hover, 1140, 375, 1.0], [T.land, F[0], F[1], 1]],
+        outbound: [[T.off, F[0], F[1], 1], [T.off + 0.7, 1250, 344, 1.05], [T.off + 1.4, 1400, 288, 1.12], [T.off + 2.1, 1530, 178, 1.0],
+          [T.off + 2.9, 1500, -23, 0.7], [T.gone, 1380, -245, 0.34]],
         glides: [[4.25, 4.8], [7.25, 7.7]],
         fadeOut: 1.3,
       },
