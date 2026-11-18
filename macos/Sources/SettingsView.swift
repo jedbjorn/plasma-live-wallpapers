@@ -28,7 +28,8 @@ struct SettingsView: View {
             .padding(20)
         }
         .frame(minWidth: 620, minHeight: 520)
-        .onAppear { if model.catalog.isEmpty && !model.catalogLoading { model.loadCatalog() } }
+        // every time the window opens: a release since the last load may have renamed or replaced videos
+        .onAppear { if !model.catalogLoading { model.loadCatalog() } }
     }
 }
 
