@@ -13,3 +13,6 @@ macos/build/
 android/build/
 # SDK outputs (look packs, release assets, captures)
 build/
+# local inputs (new source pictures, review redlines)
+_new/
+_redlines/
