@@ -2,30 +2,19 @@
 
 Live Scenes plays looping animated wallpapers ("looks") on **KDE Plasma 6, Android and macOS**. Each look is a seamless HEVC video loop, played with the hardware video decoder and paused whenever the wallpaper can't be seen, so it costs very little power. You browse looks from a catalog, preview one (downloaded temporarily), and save the ones you like as profiles; nothing else stays on disk. You can make your own looks from any video with the [SDK](#make-your-own-looks).
 
-Get started: [Linux / KDE Plasma](#linux--kde-plasma) · [Android](#android) · [macOS](#macos) · [Make your own looks](#make-your-own-looks).
+Get started: [Website](https://jedbjorn.github.io/plasma-live-wallpapers/) · [Latest release](https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest) · [Linux / KDE Plasma](#linux--kde-plasma) · [Android](#android) · [macOS](#macos) · [Make your own looks](#make-your-own-looks).
+
+All twelve looks, in motion. Select a preview to watch its video recording.
 
 | Hall | Smoke Signal | Living Water |
 | --- | --- | --- |
-| ![Hall](docs/hall.webp) | ![Smoke Signal](docs/smoke-signal.webp) | ![Living Water](docs/living-water.webp) |
-| [video (1080p)](docs/hall.webm) | [video (1080p)](docs/smoke-signal.webm) | [video (1080p)](docs/living-water.webm) |
-
-**Hall**
-
-https://github.com/user-attachments/assets/0b095001-25ac-4e0a-a24c-fdac912a55c8
-
-**Smoke Signal**
-
-https://github.com/user-attachments/assets/7aef2369-279a-4bae-8e18-d778011350b7
-
-**Living Water**
-
-https://github.com/user-attachments/assets/c4362d1e-b1f9-44e8-b46b-99c9e87d04bd
-
-![Hall, day](docs/hall-day.jpg)
-![Hall, golden hour](docs/hall-golden-hour.jpg)
-![Hall, night](docs/hall-night.jpg)
-![Smoke Signal](docs/smoke-signal.jpg)
-![Living Water](docs/living-water.jpg)
+| [![Hall recording](docs/hall.webp)](docs/hall.webm) | [![Smoke Signal recording](docs/smoke-signal.webp)](docs/smoke-signal.webm) | [![Living Water recording](docs/living-water.webp)](docs/living-water.webm) |
+| **The Surge** | **Embers** | **Avenue Flow** |
+| [![The Surge recording](docs/the-surge.webp)](docs/the-surge.webm) | [![Embers recording](docs/embers.webp)](docs/embers.webm) | [![Avenue Flow recording](docs/avenue-flow.webp)](docs/avenue-flow.webm) |
+| **Night Wind** | **Window Seat** | **Circuit** |
+| [![Night Wind recording](docs/night-wind.webp)](docs/night-wind.webm) | [![Window Seat recording](docs/window-seat.webp)](docs/window-seat.webm) | [![Circuit recording](docs/circuit.webp)](docs/circuit.webm) |
+| **Under the Wave** | **Hand in Hand** | **Blue Visitor** |
+| [![Under the Wave recording](docs/under-the-wave.webp)](docs/under-the-wave.webm) | [![Hand in Hand recording](docs/hand-in-hand.webp)](docs/hand-in-hand.webm) | [![Blue Visitor recording](docs/blue-visitor.webp)](docs/blue-visitor.webm) |
 
 ## The looks
 

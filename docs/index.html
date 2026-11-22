@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Scenes — Your screen. Somewhere else.</title>
+  <meta name="description" content="Twelve seamless live wallpapers for KDE Plasma, Android and macOS. Beautiful when you’re here. Quiet when you’re not.">
+  <meta name="theme-color" content="#090b0e">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jedbjorn.github.io/plasma-live-wallpapers/">
+  <meta property="og:title" content="Live Scenes — Your screen. Somewhere else.">
+  <meta property="og:description" content="Twelve little worlds, looping quietly behind everything you do.">
+  <meta property="og:image" content="https://jedbjorn.github.io/plasma-live-wallpapers/hall-golden-hour.jpg">
+  <meta property="og:image:alt" content="A concrete hall lit by warm light through a narrow opening">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="site.js" defer></script>
+</head>
+<body id="top">
+  <a class="skip-link" href="#looks">Skip to the looks</a>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Live Scenes, back to top">
+      <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="12.5"></circle>
+        <path d="M20.5 5.2a12.5 12.5 0 0 0 0 21.6"></path>
+        <circle class="brand__dot" cx="23.5" cy="9" r="2"></circle>
+      </svg>
+      <span>LIVE SCENES</span>
+    </a>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a href="#looks">The looks</a>
+      <a href="#how">Why Live Scenes</a>
+      <a href="#get">Install</a>
+    </nav>
+    <a class="github-link" href="https://github.com/jedbjorn/plasma-live-wallpapers" target="_blank" rel="noopener">GitHub <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero__media" aria-hidden="true">
+        <video id="hero-video" autoplay muted loop playsinline preload="metadata" poster="hall-golden-hour.jpg">
+          <source src="hall.webm" type="video/webm">
+        </video>
+      </div>
+      <div class="hero__shade" aria-hidden="true"></div>
+      <div class="hero__content">
+        <p class="eyebrow"><span class="pulse" aria-hidden="true"></span> Live wallpapers for Plasma, Android + macOS</p>
+        <h1 id="hero-title">Your screen.<br><em>Somewhere else.</em></h1>
+        <p class="hero__intro">Twelve little worlds, looping quietly behind everything you do. Seamless, hardware-decoded, and asleep the moment they’re hidden.</p>
+        <div class="hero__actions">
+          <a class="button button--signal" href="#looks">Find your next view <span aria-hidden="true">↓</span></a>
+          <a class="arrow-link" href="https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest" target="_blank" rel="noopener">Get Live Scenes <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+      <ul class="hero__facts" aria-label="Project highlights">
+        <li><strong>12</strong><span>distinct looks</span></li>
+        <li><strong>3</strong><span>platforms, one catalog</span></li>
+        <li><strong>0</strong><span>accounts, ads or tracking</span></li>
+      </ul>
+      <a class="scroll-cue" href="#looks" aria-label="Scroll to the collection"><span>SCROLL TO WANDER</span><i aria-hidden="true"></i></a>
+    </section>
+
+    <div class="ambient-strip" aria-hidden="true">
+      <div class="ambient-strip__track">
+        <span>SEAMLESS BY DESIGN</span><i></i><span>HARDWARE DECODED</span><i></i><span>PAUSED WHEN HIDDEN</span><i></i><span>MADE TO GET LOST IN</span><i></i>
+        <span>SEAMLESS BY DESIGN</span><i></i><span>HARDWARE DECODED</span><i></i><span>PAUSED WHEN HIDDEN</span><i></i><span>MADE TO GET LOST IN</span><i></i>
+      </div>
+    </div>
+
+    <section class="collection section" id="looks" aria-labelledby="looks-title">
+      <div class="section-heading">
+        <p class="section-index">01 / THE COLLECTION</p>
+        <div>
+          <h2 id="looks-title">Pick a mood.<br><em>Stay a while.</em></h2>
+          <p>Slow water, restless ink, city lights, a cat in the rain. Every look is a complete loop, not an effect running on your desktop.</p>
+        </div>
+      </div>
+
+      <div class="collection__toolbar">
+        <div class="filters" aria-label="Filter the collection">
+          <button class="filter is-active" type="button" data-filter="all" aria-pressed="true">All <span>12</span></button>
+          <button class="filter" type="button" data-filter="atmosphere" aria-pressed="false">Atmosphere <span>5</span></button>
+          <button class="filter" type="button" data-filter="illustration" aria-pressed="false">Illustration <span>7</span></button>
+          <button class="filter" type="button" data-filter="procedural" aria-pressed="false">Procedural <span>4</span></button>
+        </div>
+        <p class="collection__hint"><span class="play-icon" aria-hidden="true"></span> Select a look to watch</p>
+        <p class="sr-only" id="filter-status" aria-live="polite"></p>
+      </div>
+
+      <div class="look-grid">
+        <article class="look-card" data-categories="atmosphere procedural" style="--accent:#6f8db0">
+          <div class="look-card__media">
+            <img src="hall-day.jpg" data-static="hall-day.jpg" data-animated="hall.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 01</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Hall</h3><p>Architecture · One full day</p></div><span>84s</span></div>
+          <a class="look-card__open" href="hall.webm" data-look="hall" aria-label="Watch the Hall recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="illustration procedural" style="--accent:#e2441f">
+          <div class="look-card__media">
+            <img src="smoke-signal.jpg" data-static="smoke-signal.jpg" data-animated="smoke-signal.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 02</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Smoke Signal</h3><p>Glitch · Smoke · Rain</p></div><span>60s</span></div>
+          <a class="look-card__open" href="smoke-signal.webm" data-look="smoke-signal" aria-label="Watch the Smoke Signal recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="atmosphere procedural" style="--accent:#f28c28">
+          <div class="look-card__media">
+            <img src="living-water.jpg" data-static="living-water.jpg" data-animated="living-water.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 03</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Living Water</h3><p>Koi · Caustics · Ripples</p></div><span>55s</span></div>
+          <a class="look-card__open" href="living-water.webm" data-look="living-water" aria-label="Watch the Living Water recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="illustration" style="--accent:#a99cff">
+          <div class="look-card__media">
+            <img src="the-surge.jpg" data-static="the-surge.jpg" data-animated="the-surge.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 04</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>The Surge</h3><p>Ink · White fire · Ash</p></div><span>32s</span></div>
+          <a class="look-card__open" href="the-surge.webm" data-look="the-surge" aria-label="Watch The Surge recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="atmosphere" style="--accent:#ff6847">
+          <div class="look-card__media">
+            <img src="embers.jpg" data-static="embers.jpg" data-animated="embers.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 05</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Embers</h3><p>Forest · Sparks · Warmth</p></div><span>32s</span></div>
+          <a class="look-card__open" href="embers.webm" data-look="embers" aria-label="Watch the Embers recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="atmosphere" style="--accent:#55b7af">
+          <div class="look-card__media">
+            <img src="avenue-flow.jpg" data-static="avenue-flow.jpg" data-animated="avenue-flow.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 06</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Avenue Flow</h3><p>City · Traffic · Three twinkle levels</p></div><span>20s</span></div>
+          <a class="look-card__open" href="avenue-flow.webm" data-look="avenue-flow" aria-label="Watch the Avenue Flow recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="illustration" style="--accent:#e3cb6a">
+          <div class="look-card__media">
+            <img src="night-wind.jpg" data-static="night-wind.jpg" data-animated="night-wind.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 07</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Night Wind</h3><p>Ink · Moonlight · A wandering witch</p></div><span>16s</span></div>
+          <a class="look-card__open" href="night-wind.webm" data-look="night-wind" aria-label="Watch the Night Wind recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="atmosphere illustration" style="--accent:#9cc878">
+          <div class="look-card__media">
+            <img src="window-seat.jpg" data-static="window-seat.jpg" data-animated="window-seat.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 08</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Window Seat</h3><p>Pixel art · Rain · One black cat</p></div><span>35s</span></div>
+          <a class="look-card__open" href="window-seat.webm" data-look="window-seat" aria-label="Watch the Window Seat recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="procedural" style="--accent:#38a6dc">
+          <div class="look-card__media">
+            <img src="circuit.jpg" data-static="circuit.jpg" data-animated="circuit.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 09</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Circuit</h3><p>Traces · Blue light · Drawn and erased</p></div><span>56s</span></div>
+          <a class="look-card__open" href="circuit.webm" data-look="circuit" aria-label="Watch the Circuit recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="illustration" style="--accent:#85a7e8">
+          <div class="look-card__media">
+            <img src="under-the-wave.jpg" data-static="under-the-wave.jpg" data-animated="under-the-wave.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 10</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Under the Wave</h3><p>Woodblock · A schooner · Two frames</p></div><span>28s</span></div>
+          <a class="look-card__open" href="under-the-wave.webm" data-look="under-the-wave" aria-label="Watch the Under the Wave recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="illustration" style="--accent:#b5aa58">
+          <div class="look-card__media">
+            <img src="hand-in-hand.jpg" data-static="hand-in-hand.jpg" data-animated="hand-in-hand.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 11</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Hand in Hand</h3><p>Paper · Ink · An unlikely pair</p></div><span>16.5s</span></div>
+          <a class="look-card__open" href="hand-in-hand.webm" data-look="hand-in-hand" aria-label="Watch the Hand in Hand recording"></a>
+        </article>
+
+        <article class="look-card" data-categories="illustration" style="--accent:#7ac9ed">
+          <div class="look-card__media">
+            <img src="blue-visitor.jpg" data-static="blue-visitor.jpg" data-animated="blue-visitor.webp" width="640" height="360" loading="lazy" decoding="async" alt="">
+            <span class="look-card__number">/ 12</span><span class="look-card__watch"><span class="play-icon" aria-hidden="true"></span> Watch loop</span>
+          </div>
+          <div class="look-card__caption"><div><h3>Blue Visitor</h3><p>A butterfly · A glance · A little mystery</p></div><span>32s</span></div>
+          <a class="look-card__open" href="blue-visitor.webm" data-look="blue-visitor" aria-label="Watch the Blue Visitor recording"></a>
+        </article>
+      </div>
+      <noscript><p class="noscript-note">Select any look to open its recording. Enable JavaScript for the in-page player and collection filters.</p></noscript>
+    </section>
+
+    <section class="how section" id="how" aria-labelledby="how-title">
+      <div class="section-heading">
+        <p class="section-index">02 / THE FEELING, WITHOUT THE OVERHEAD</p>
+        <div>
+          <h2 id="how-title">Alive when you’re here.<br><em>Quiet when you’re not.</em></h2>
+          <p>The atmosphere of a live wallpaper, without keeping a tiny world simulation running behind your work.</p>
+        </div>
+      </div>
+      <div class="principles">
+        <article class="principle">
+          <span class="principle__number">01</span>
+          <h3>Perfectly looped</h3>
+          <p>Each scene is rendered once into a seamless HEVC video. No web view, no live renderer, no visible seam.</p>
+        </article>
+        <article class="principle">
+          <span class="principle__number">02</span>
+          <h3>Light by default</h3>
+          <p>Your device’s hardware decoder does the work. Playback pauses when the wallpaper is covered, hidden or asleep.</p>
+        </article>
+        <article class="principle">
+          <span class="principle__number">03</span>
+          <h3>Make it yours</h3>
+          <p>Preview before saving, keep multiple profiles, choose your speed, and tune the looks that offer options.</p>
+        </article>
+      </div>
+      <div class="feature-wide">
+        <img src="living-water.jpg" width="1280" height="720" loading="lazy" decoding="async" alt="Pale koi circling a single golden fish beneath dark water">
+        <div class="feature-wide__content">
+          <p class="eyebrow">SMALL DETAILS, STRONG FEELINGS</p>
+          <h3>More than motion.<br><em>A sense of place.</em></h3>
+          <p>Living Water arrives built in, so there is something beautiful from the first launch. Android can even match the phone’s theme to the look you choose.</p>
+          <a class="arrow-link" href="https://github.com/jedbjorn/plasma-live-wallpapers#how-it-works-on-every-platform" target="_blank" rel="noopener">How playback works <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="install section" id="get" aria-labelledby="get-title">
+      <div class="section-heading">
+        <p class="section-index">03 / MAKE YOURSELF AT HOME</p>
+        <div>
+          <h2 id="get-title">One catalog.<br><em>Three places to land.</em></h2>
+          <p>Start with the built-in look, then browse the release catalog and save only the worlds you want to keep.</p>
+        </div>
+      </div>
+      <div class="platforms">
+        <article class="platform">
+          <div class="platform__top"><span>LINUX</span><span>01</span></div>
+          <h3>KDE Plasma 6</h3>
+          <p>One installer for the wallpaper plugin, catalog, previews and profiles.</p>
+          <div class="code-block"><code>git clone https://github.com/jedbjorn/plasma-live-wallpapers.git<br>cd plasma-live-wallpapers<br>./install.sh</code><button class="copy-button" type="button" data-copy="git clone https://github.com/jedbjorn/plasma-live-wallpapers.git && cd plasma-live-wallpapers && ./install.sh" aria-label="Copy KDE Plasma installation commands">Copy</button></div>
+          <a class="platform__link" href="https://github.com/jedbjorn/plasma-live-wallpapers#linux--kde-plasma" target="_blank" rel="noopener">Plasma setup guide <span aria-hidden="true">↗</span></a>
+        </article>
+        <article class="platform">
+          <div class="platform__top"><span>MOBILE</span><span>02</span></div>
+          <h3>Android 10+</h3>
+          <p>Live wallpaper, matching Material You themes, profiles and battery-aware stills.</p>
+          <a class="button button--dark" href="https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest" target="_blank" rel="noopener">Download the APK <span aria-hidden="true">↗</span></a>
+          <p class="platform__note">Choose the APK from the latest release, then set Live Scenes as your wallpaper.</p>
+          <a class="platform__link" href="https://github.com/jedbjorn/plasma-live-wallpapers#android" target="_blank" rel="noopener">Android setup guide <span aria-hidden="true">↗</span></a>
+        </article>
+        <article class="platform">
+          <div class="platform__top"><span>DESKTOP</span><span>03</span></div>
+          <h3>macOS 13+</h3>
+          <p>A small menu-bar app with per-look options, previews and multi-screen playback.</p>
+          <div class="code-block"><code>git clone https://github.com/jedbjorn/plasma-live-wallpapers.git<br>cd plasma-live-wallpapers<br>./macos/build.sh --run</code><button class="copy-button" type="button" data-copy="git clone https://github.com/jedbjorn/plasma-live-wallpapers.git && cd plasma-live-wallpapers && ./macos/build.sh --run" aria-label="Copy macOS installation commands">Copy</button></div>
+          <a class="platform__link" href="https://github.com/jedbjorn/plasma-live-wallpapers#macos" target="_blank" rel="noopener">macOS setup guide <span aria-hidden="true">↗</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="make section" aria-labelledby="make-title">
+      <p class="section-index">04 / YOUR WORLD, NEXT</p>
+      <div class="make__content">
+        <h2 id="make-title">Got a clip?<br><em>Make it a place.</em></h2>
+        <div>
+          <p>A render, phone footage, an animation, something wonderfully strange. The SDK turns almost any video into a seamless Live Scenes pack.</p>
+          <a class="button button--outline" href="https://github.com/jedbjorn/plasma-live-wallpapers#make-your-own-looks" target="_blank" rel="noopener">Make your own look <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+      <div class="make__command" aria-label="SDK example"><span>$</span> sdk/livescenes pack render.mov --id aurora --title “Aurora”</div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <a class="brand" href="#top" aria-label="Live Scenes, back to top">
+      <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12.5"></circle><path d="M20.5 5.2a12.5 12.5 0 0 0 0 21.6"></path><circle class="brand__dot" cx="23.5" cy="9" r="2"></circle></svg>
+      <span>LIVE SCENES</span>
+    </a>
+    <p>Small worlds. Low overhead.</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/jedbjorn/plasma-live-wallpapers" target="_blank" rel="noopener">GitHub ↗</a><a href="https://github.com/jedbjorn/plasma-live-wallpapers/blob/main/ASSETS.md" target="_blank" rel="noopener">Assets &amp; licensing ↗</a><a href="#top">Back to top ↑</a></nav>
+    <p class="site-footer__legal">Player code is MIT. Individual looks retain their listed licenses and artwork rights.</p>
+  </footer>
+
+  <dialog class="player" id="player" aria-labelledby="player-title">
+    <div class="player__shell">
+      <button class="player__close" type="button" aria-label="Close video player"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg></button>
+      <div class="player__media"><video id="player-video" controls loop playsinline preload="none"></video></div>
+      <div class="player__info">
+        <p class="player__kicker" id="player-kicker"></p>
+        <h2 id="player-title"></h2>
+        <p id="player-description"></p>
+        <a class="arrow-link" id="player-source" href="#" target="_blank" rel="noopener">Open original recording <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>
