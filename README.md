@@ -2,7 +2,7 @@
 
 Live Scenes plays looping animated wallpapers ("looks") on **KDE Plasma 6, Android and macOS**. Each look is a seamless HEVC video loop, played with the hardware video decoder and paused whenever the wallpaper can't be seen, so it costs very little power. You browse looks from a catalog, preview one (downloaded temporarily), and save the ones you like as profiles; nothing else stays on disk. You can make your own looks from any video with the [SDK](#make-your-own-looks).
 
-Get started: [Website](https://jedbjorn.github.io/plasma-live-wallpapers/) · [Latest release](https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest) · [Linux / KDE Plasma](#linux--kde-plasma) · [Android](#android) · [macOS](#macos) · [Make your own looks](#make-your-own-looks).
+Get started: [Website](https://plasma-live-wallpapers.designs-os.com/) · [Latest release](https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest) · [Linux / KDE Plasma](#linux--kde-plasma) · [Android](#android) · [macOS](#macos) · [Make your own looks](#make-your-own-looks).
 
 All thirteen looks, in motion. Select a preview to watch its video recording.
 

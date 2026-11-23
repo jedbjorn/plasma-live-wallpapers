@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://plasma-live-wallpapers.designs-os.com/sitemap.xml
