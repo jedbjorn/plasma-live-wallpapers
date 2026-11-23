@@ -4,7 +4,7 @@ Live Scenes plays looping animated wallpapers ("looks") on **KDE Plasma 6, Andro
 
 Get started: [Website](https://jedbjorn.github.io/plasma-live-wallpapers/) · [Latest release](https://github.com/jedbjorn/plasma-live-wallpapers/releases/latest) · [Linux / KDE Plasma](#linux--kde-plasma) · [Android](#android) · [macOS](#macos) · [Make your own looks](#make-your-own-looks).
 
-All twelve looks, in motion. Select a preview to watch its video recording.
+All thirteen looks, in motion. Select a preview to watch its video recording.
 
 | Hall | Smoke Signal | Living Water |
 | --- | --- | --- |
@@ -15,6 +15,8 @@ All twelve looks, in motion. Select a preview to watch its video recording.
 | [![Night Wind recording](docs/night-wind.webp)](docs/night-wind.webm) | [![Window Seat recording](docs/window-seat.webp)](docs/window-seat.webm) | [![Circuit recording](docs/circuit.webp)](docs/circuit.webm) |
 | **Under the Wave** | **Hand in Hand** | **Blue Visitor** |
 | [![Under the Wave recording](docs/under-the-wave.webp)](docs/under-the-wave.webm) | [![Hand in Hand recording](docs/hand-in-hand.webp)](docs/hand-in-hand.webm) | [![Blue Visitor recording](docs/blue-visitor.webp)](docs/blue-visitor.webm) |
+| **Saint Marianne** | | |
+| [![Saint Marianne recording](docs/saint-marianne.webp)](docs/saint-marianne.webm) | | |
 
 ## The looks
 
@@ -30,6 +32,7 @@ All twelve looks, in motion. Select a preview to watch its video recording.
 - **Under the Wave**: a great wave builds and breaks over a little schooner, which capsizes, bobs keel-up, rights herself and sails on. Two options: Frame (Inside the circle, or Breaks out, with the wave and the ship leaving the circle) and Color (an Indigo or Seafoam theme on Android).
 - **Hand in Hand**: an ink drawing of a giant in a diving suit and the little girl whose hand he holds, skipping across old paper with ink flying at every landing; they jump round and skip back out. On phones the picture is turned sideways, like Smoke Signal.
 - **Blue Visitor**: a pale girl with glowing eyes in the dark; a blue butterfly flutters down onto her finger, she turns to stare at you, it flies off and she looks back. Phones get a tall layout of their own.
+- **Saint Marianne**: the statue of Marianne in a yellow vest lettered by hand, painted as a saint; a sunburst twinkles behind her head, sooty blue, white and red smoke rolls around her, and the vest's long cloth flaps in the wind. Phones get a tall layout of their own.
 
 The looks were made once from animated web pages, which are kept in [`scenes-src/`](scenes-src/) as their source; `sdk/capture` records such a page frame by frame into a perfect loop for `livescenes pack`. The apps no longer render anything live.
 
