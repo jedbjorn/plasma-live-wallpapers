@@ -2,7 +2,7 @@
 
 Everything in this project is MIT licensed ([LICENSE](LICENSE)) wherever we are able to license it: the code, and the images and videos we made. That includes the Hall and Living Water looks (their videos and posters, published as release assets), `scenes-src/hall/still.jpg`, and the Hall and Living Water images and videos under `docs/`.
 
-The README and website gallery under `docs/` contains posters, animated previews and video recordings of all twelve looks. These reproduce the corresponding look assets and do not change or add to the licensing of the underlying artwork.
+The README and website gallery under `docs/` contains posters, animated previews and video recordings of all thirteen looks. These reproduce the corresponding look assets and do not change or add to the licensing of the underlying artwork.
 
 The one exception is the **Smoke Signal artwork**, which is not ours to license. It covers:
 

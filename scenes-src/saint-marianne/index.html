@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Saint Marianne</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#15161a}canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="scene.js"></script>
+<script>
+// Marianne of the Place de la République in her yellow vest, painted as a saint: a sunburst behind her head, blue,
+// white and red smoke around her. The rays twinkle, the smoke rolls, the vest's long cloth streams in the wind;
+// the bronze does not move.
+// Layouts: h = the statue picture's height as a share of the screen's, x = its centre as a share of the width
+// (the picture always stands on the bottom edge), sun = the sunburst's centre on the screen.
+Scene.run({
+  L: 24,
+  smoke: 4,
+  soot: 0.6,
+  landscape: { plate: 'plate-landscape.jpg', h: 1.2, x: 0.5, sun: [0.514, 0.328] },
+  portrait: { plate: 'plate-portrait.jpg', h: 1.0, x: 0.5, sun: [0.547, 0.44] },
+  // motion.png, as printed by tools/flowatlas.py
+  // (up to four clips, played forward one after another, `rounds` times round per loop, each from frame `first`,
+  // fading into the next over `overlap` of a slot; gain = how much of each clip's motion to apply,
+  // flutter = how hard the waves that run down the cloth flap it)
+  motion: { clips: 3, frames: 121, cols: 20, rows: 19, cell: [90, 156], range: 0.10, crop: [0.00926, 0.30667, 0.88889, 0.69333],
+            first: 12, overlap: 0.2, rounds: 3, gain: [0.8, 0.8, 0.8], flutter: 1.0 },
+});
+</script>
+</body></html>

@@ -48,6 +48,10 @@ const LOOKS = {
   'blue-visitor': {
     title: 'Blue Visitor', number: '12', loop: '32', video: 'blue-visitor.webm', poster: 'blue-visitor.jpg', accent: '#7ac9ed',
     description: 'A blue butterfly settles on her finger. She turns to stare at you; when it flies off, she looks back at her empty hand.'
+  },
+  'saint-marianne': {
+    title: 'Saint Marianne', number: '13', loop: '24', video: 'saint-marianne.webm', poster: 'saint-marianne.jpg', accent: '#e8c43c',
+    description: 'Marianne in her yellow vest, painted as a saint: a sunburst twinkles behind her head, sooty blue, white and red smoke rolls around her, and the vest flaps in the wind.'
   }
 };
 
