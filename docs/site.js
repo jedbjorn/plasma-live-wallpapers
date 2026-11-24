@@ -52,6 +52,10 @@ const LOOKS = {
   'saint-marianne': {
     title: 'Saint Marianne', number: '13', loop: '24', video: 'saint-marianne.webm', poster: 'saint-marianne.jpg', accent: '#e8c43c',
     description: 'Marianne in her yellow vest, painted as a saint: a sunburst twinkles behind her head, sooty blue, white and red smoke rolls around her, and the vest flaps in the wind.'
+  },
+  'scarlet-wind': {
+    title: 'Scarlet Wind', number: '14', loop: '24', video: 'scarlet-wind.webm', poster: 'scarlet-wind.jpg', accent: '#c23a4c',
+    description: 'An armoured figure leans on her blade in a dark wood and does not move. The wind does: her red hair streams, sparks ride round the ring about her, embers lift off the ground.'
   }
 };
 
