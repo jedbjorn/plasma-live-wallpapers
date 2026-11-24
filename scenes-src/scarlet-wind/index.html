@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scarlet Wind</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#0c0c0d}canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="scene.js"></script>
+<script>
+// An armoured figure leaning on her blade in a dark wood, a ring of red sparks around her. She does not move; the
+// wind does: her hair streams, the ring's sparks ride round it, embers lift off the ground by the blade, leaves
+// and mist blow past.
+// ring and root as printed by tools/masks.py. Layouts: see scene.js (the phone's picture is tools/tall.py's).
+Scene.run({
+  L: 24,
+  ring: [951.3, 425.5, 422.5, 406.4],
+  root: [880, 250],
+  landscape: { picture: 'picture.jpg', org: [0, 0], size: [1920, 1080], x: 960, w: 1920 },
+  portrait: { picture: 'tall.jpg', org: [416, -896], size: [1088, 1976], x: 950, w: 880, seam: true },
+});
+</script>
+</body></html>
